@@ -55,9 +55,16 @@ class ProbeReport:
 class SafeParameterProbe:
     _PREFERRED_PARAMETERS = ("ParamAngleX", "ParamEyeLOpen", "ParamMouthOpenY")
 
-    def __init__(self, cubism: CubismExternalEditAdapter, pc_control: WindowsPcControlAdapter) -> None:
+    def __init__(
+        self,
+        cubism: CubismExternalEditAdapter,
+        pc_control: WindowsPcControlAdapter,
+        *,
+        focus_settle_seconds: float = 2.0,
+    ) -> None:
         self.cubism = cubism
         self.pc_control = pc_control
+        self.focus_settle_seconds = focus_settle_seconds
 
     async def run(self, record: ProjectRecord) -> ProbeReport:
         original_value: float | None = None
@@ -187,7 +194,7 @@ class SafeParameterProbe:
     async def _capture(self, record: ProjectRecord, identity: LiveIdentity) -> None:
         await self._guard_identity(record, identity)
         await self.pc_control.focus_cubism()
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(self.focus_settle_seconds)
         await self._ensure_not_stopped()
         await self.pc_control.take_screenshot()
 

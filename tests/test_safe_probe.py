@@ -103,6 +103,10 @@ class FakePcControl:
             raise RuntimeError("capture failed")
 
 
+def make_probe(cubism: FakeCubism, pc_control: FakePcControl) -> SafeParameterProbe:
+    return SafeParameterProbe(cubism, pc_control, focus_settle_seconds=0)
+
+
 class SafeProbeTests(unittest.TestCase):
     def make_record(self) -> tuple[TemporaryDirectory[str], object]:
         temporary = TemporaryDirectory()
@@ -116,7 +120,7 @@ class SafeProbeTests(unittest.TestCase):
         temporary, record = self.make_record()
         with temporary:
             cubism = FakeCubism(record.working_model)
-            report = asyncio.run(SafeParameterProbe(cubism, FakePcControl()).run(record))
+            report = asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(report.screenshots_captured, 4)
             self.assertTrue(report.restored)
             self.assertTrue(report.restore_readback)
@@ -132,7 +136,7 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model)
             with self.assertRaises(RuntimeError):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl(screenshot_failure=True)).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl(screenshot_failure=True)).run(record))
             self.assertEqual(cubism.set_calls[-1], 7)
             self.assertEqual(cubism.clear_calls, 1)
 
@@ -141,7 +145,7 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model, changing_uid=True)
             with self.assertRaises(IdentityMismatchError):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl()).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(cubism.set_calls, [7])
             self.assertEqual(record.state, WorkflowState.NEEDS_HUMAN_REVIEW)
 
@@ -150,7 +154,7 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model)
             with self.assertRaises(EmergencyStopError):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl(stop_on_check=3)).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl(stop_on_check=3)).run(record))
             self.assertEqual(cubism.set_calls, [7])
             self.assertEqual(cubism.clear_calls, 1)
             self.assertEqual(record.state, WorkflowState.EMERGENCY_STOPPED)
@@ -160,7 +164,7 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model, fail_restore=True)
             with self.assertRaisesRegex(ProbeError, "復元できません"):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl()).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(record.state, WorkflowState.NEEDS_HUMAN_REVIEW)
             self.assertEqual(cubism.clear_calls, 0)
 
@@ -169,7 +173,7 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model, readback_value=8.0)
             with self.assertRaisesRegex(ProbeError, "復元できません"):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl()).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(cubism.set_calls[-2:], [7, 7])
             self.assertEqual(cubism.clear_calls, 2)
             self.assertEqual(record.state, WorkflowState.NEEDS_HUMAN_REVIEW)
@@ -179,7 +183,7 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model, mutate_path=record.source_model)
             with self.assertRaisesRegex(ProbeError, "SHA-256"):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl()).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(record.state, WorkflowState.NEEDS_HUMAN_REVIEW)
 
     def test_working_hash_change_requires_human_review(self) -> None:
@@ -187,7 +191,7 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model, mutate_path=record.working_model)
             with self.assertRaisesRegex(ProbeError, "SHA-256"):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl()).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(record.state, WorkflowState.NEEDS_HUMAN_REVIEW)
 
     def test_original_hash_change_requires_human_review(self) -> None:
@@ -195,5 +199,5 @@ class SafeProbeTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model, mutate_path=record.original_model)
             with self.assertRaisesRegex(ProbeError, "SHA-256"):
-                asyncio.run(SafeParameterProbe(cubism, FakePcControl()).run(record))
+                asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(record.state, WorkflowState.NEEDS_HUMAN_REVIEW)
