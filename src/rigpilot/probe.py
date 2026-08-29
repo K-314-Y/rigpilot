@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from math import isclose
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,7 @@ class SafeParameterProbe:
         working_unchanged = False
         original_unchanged: bool | None = None
         cubism_focused = False
+        restore_attempts: list[dict[str, Any]] = []
         failure: Exception | None = None
         try:
             if source_before != record.source_sha256 or working_before != record.working_sha256:
@@ -131,7 +133,9 @@ class SafeParameterProbe:
             if identity is not None and parameter is not None and original_value is not None:
                 try:
                     record.state = WorkflowState.RESTORING
-                    restore_readback = await self._restore_and_readback(identity, parameter, original_value)
+                    restore_readback, restore_attempts = await self._restore_and_readback(
+                        identity, parameter, original_value
+                    )
                     if not restore_readback:
                         raise RestoreMismatchError("元値の読取り確認が一致しません")
                     restored = True
@@ -154,7 +158,7 @@ class SafeParameterProbe:
                 failure = ProbeError("Probe中に監視対象の.cmo3のSHA-256が変化しました")
             self._record(
                 record, parameter, original_value, tested, screenshots, restored, restore_readback,
-                source_unchanged, working_unchanged, original_unchanged, failure,
+                source_unchanged, working_unchanged, original_unchanged, restore_attempts, failure,
             )
         if failure is not None:
             raise failure
@@ -205,14 +209,25 @@ class SafeParameterProbe:
 
     async def _restore_and_readback(
         self, identity: LiveIdentity, parameter: ParameterRange, original_value: float
-    ) -> bool:
-        for _attempt in range(2):
+    ) -> tuple[bool, list[dict[str, Any]]]:
+        attempts: list[dict[str, Any]] = []
+        for attempt in range(1, 3):
+            requested_at = datetime.now(UTC).isoformat()
             await self.cubism.set_parameter_preview(identity.model_uid, parameter.parameter_id, original_value)
-            await self.cubism.clear_parameter_preview(identity.model_uid)
             restored_value = await self.cubism.get_parameter_values(identity.model_uid, parameter.parameter_id)
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "requested_value": original_value,
+                    "requested_at": requested_at,
+                    "readback_value": restored_value,
+                    "readback_at": datetime.now(UTC).isoformat(),
+                    "preview_clear": "not_called_after_restore",
+                }
+            )
             if isclose(restored_value, original_value, rel_tol=0.0, abs_tol=1e-6):
-                return True
-        return False
+                return True, attempts
+        return False, attempts
 
     @staticmethod
     def _original_hash(record: ProjectRecord) -> str | None:
@@ -269,6 +284,7 @@ class SafeParameterProbe:
         source_unchanged: bool,
         working_unchanged: bool,
         original_unchanged: bool | None,
+        restore_attempts: list[dict[str, Any]],
         failure: Exception | None,
     ) -> None:
         entry = {
@@ -281,6 +297,7 @@ class SafeParameterProbe:
             "source_hash_unchanged": source_unchanged,
             "working_hash_unchanged": working_unchanged,
             "original_hash_unchanged": original_unchanged,
+            "restore_attempts": restore_attempts,
             "saved": False,
             "status": "passed" if failure is None else "failed",
         }

@@ -7,12 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
-from .mcp_client import McpToolSession
+from .mcp_client import McpClientError, McpToolSession
 from .models import ParameterRange
 
 
 class LiveAdapterError(RuntimeError):
     pass
+
+
+class ScreenshotUnavailableError(LiveAdapterError):
+    """Raised when PC Control's screenshot policy does not permit capture."""
 
 
 def _value(data: dict[str, Any], *keys: str) -> Any:
@@ -35,7 +39,7 @@ class CubismExternalEditAdapter:
         "cubism_status", "cubism_get_model_uid", "cubism_get_documents",
         "cubism_get_current_edit_mode", "cubism_get_parameters",
         "cubism_get_parameter_values", "cubism_get_part_structure",
-        "cubism_set_parameter_values", "cubism_clear_parameter_values",
+        "cubism_set_parameter_values",
     }
 
     def __init__(self, client: McpToolSession) -> None:
@@ -80,12 +84,12 @@ class CubismExternalEditAdapter:
             {"model_uid": model_uid, "parameters": [{"Id": parameter_id, "Value": value}]},
         )
 
-    async def clear_parameter_preview(self, model_uid: str) -> None:
-        await self.client.call_json("cubism_clear_parameter_values", {"model_uid": model_uid})
-
-
 class WindowsPcControlAdapter:
-    _TOOLS: ClassVar[set[str]] = {"get_control_status", "list_windows", "activate_window", "take_screenshot"}
+    _TOOLS: ClassVar[set[str]] = {
+        "get_control_status", "get_pc_status", "list_windows", "activate_window", "take_screenshot",
+    }
+    _SCREENSHOT_MAX_WAIT_SECONDS = 35.0
+    _SCREENSHOT_MAX_STATUS_CHECKS = 8
 
     def __init__(self, client: McpToolSession) -> None:
         self.client = client
@@ -117,19 +121,58 @@ class WindowsPcControlAdapter:
             raise LiveAdapterError("Cubismウィンドウを前面化できませんでした")
 
     async def take_screenshot(self) -> None:
-        await self.client.call_image("take_screenshot", {"monitor": 1, "max_width": 1280})
+        for attempt in range(2):
+            try:
+                await self.client.call_image("take_screenshot", {"monitor": 1, "max_width": 1280})
+                return
+            except McpClientError as error:
+                state = await self._screenshot_state()
+                if attempt == 0 and state in {"RATE_LIMITED", "CAPTURE_BUSY", "CAPTURE_FAILED", "EMPTY_IMAGE_RESPONSE"}:
+                    await self.wait_for_screenshot_ready()
+                    continue
+                raise ScreenshotUnavailableError(
+                    f"スクリーンショットを取得できませんでした ({state})。PC Controlの状態を確認してください"
+                ) from error
 
-    async def wait_for_screenshot_ready(self) -> None:
-        status = await self.get_status()
+    async def wait_for_screenshot_ready(
+        self,
+        *,
+        max_wait_seconds: float = _SCREENSHOT_MAX_WAIT_SECONDS,
+        max_status_checks: int = _SCREENSHOT_MAX_STATUS_CHECKS,
+    ) -> None:
+        deadline = asyncio.get_running_loop().time() + max_wait_seconds
+        for _check in range(max_status_checks):
+            status = await self.client.call_json("get_pc_status")
+            health = status.get("screenshot_policy", {}).get("health", {})
+            if not isinstance(health, dict):
+                raise ScreenshotUnavailableError("PC Controlのスクリーンショット状態を確認できません")
+            blocked = float(health.get("blocked_seconds_remaining", 0) or 0)
+            cooldown = float(health.get("cooldown_seconds_remaining", 0) or 0)
+            busy = bool(health.get("busy"))
+            wait_seconds = max(blocked, cooldown, 0.1 if busy else 0.0)
+            if wait_seconds <= 0:
+                return
+            if asyncio.get_running_loop().time() + wait_seconds + 0.1 > deadline:
+                raise ScreenshotUnavailableError(
+                    "PC Controlのスクリーンショットが一時停止中です。復帰を待ってから再実行してください"
+                )
+            await asyncio.sleep(wait_seconds + 0.1)
+        raise ScreenshotUnavailableError("PC Controlのスクリーンショット待機回数の上限に達しました")
+
+    async def _screenshot_state(self) -> str:
+        status = await self.client.call_json("get_pc_status")
         health = status.get("screenshot_policy", {}).get("health", {})
         if not isinstance(health, dict):
-            return
-        wait_seconds = max(
-            float(health.get("blocked_seconds_remaining", 0) or 0),
-            float(health.get("cooldown_seconds_remaining", 0) or 0),
-        )
-        if wait_seconds > 0:
-            await asyncio.sleep(wait_seconds + 0.1)
+            return "PC_CONTROL_DISCONNECTED"
+        if float(health.get("blocked_seconds_remaining", 0) or 0) > 0:
+            return "TEMPORARILY_SUSPENDED"
+        if bool(health.get("busy")):
+            return "CAPTURE_BUSY"
+        if float(health.get("cooldown_seconds_remaining", 0) or 0) > 0:
+            return "RATE_LIMITED"
+        if int(health.get("recent_failures", 0) or 0) > 0:
+            return "CAPTURE_FAILED"
+        return "EMPTY_IMAGE_RESPONSE"
 
     async def open_allowed_working_model(self, model_path: Path) -> None:
         await self.client.require_tools({"open_allowed_path"})

@@ -2,8 +2,14 @@ import asyncio
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
 
-from rigpilot.live_adapters import LiveIdentity
+from rigpilot.live_adapters import (
+    LiveIdentity,
+    ScreenshotUnavailableError,
+    WindowsPcControlAdapter,
+)
+from rigpilot.mcp_client import McpClientError
 from rigpilot.models import ParameterRange, WorkflowState
 from rigpilot.probe import (
     EmergencyStopError,
@@ -58,6 +64,8 @@ class FakeCubism:
         return [ParameterRange("ParamAngleX", -30, 0, 30)]
 
     async def get_parameter_values(self, model_uid: str, parameter_id: str) -> float:
+        if self.readback_value is not None and self.set_calls and self.set_calls[-1] == 7:
+            return self.readback_value
         return self.current_value
 
     async def get_part_structure(self, model_uid: str) -> dict[str, object]:
@@ -76,8 +84,6 @@ class FakeCubism:
     async def clear_parameter_preview(self, model_uid: str) -> None:
         self.called_tools.append("clear_parameter_preview")
         self.clear_calls += 1
-        if self.readback_value is not None:
-            self.current_value = self.readback_value
 
 
 class FakePcControl:
@@ -107,11 +113,79 @@ class FakePcControl:
         return None
 
 
+class FakeMcpClient:
+    def __init__(
+        self,
+        statuses: list[dict[str, object]],
+        image_results: list[Exception | None] | None = None,
+    ) -> None:
+        self.statuses = iter(statuses)
+        self.image_results = list(image_results or [])
+        self.json_calls: list[str] = []
+        self.image_calls = 0
+
+    async def call_json(self, name: str, arguments: object = None) -> dict[str, object]:
+        self.json_calls.append(name)
+        if name == "get_pc_status":
+            return next(self.statuses)
+        return {"control_stopped": False}
+
+    async def call_image(self, name: str, arguments: object = None) -> None:
+        self.image_calls += 1
+        if self.image_results:
+            result = self.image_results.pop(0)
+            if result is not None:
+                raise result
+
+
+def screenshot_status(
+    *, cooldown: float = 0, blocked: float = 0, busy: bool = False, failures: int = 0
+) -> dict[str, object]:
+    return {
+        "screenshot_policy": {
+            "health": {
+                "cooldown_seconds_remaining": cooldown,
+                "blocked_seconds_remaining": blocked,
+                "busy": busy,
+                "recent_failures": failures,
+            }
+        }
+    }
+
+
 def make_probe(cubism: FakeCubism, pc_control: FakePcControl) -> SafeParameterProbe:
     return SafeParameterProbe(cubism, pc_control, focus_settle_seconds=0)
 
 
 class SafeProbeTests(unittest.TestCase):
+    def test_screenshot_readiness_uses_pc_status_and_waits_for_cooldown(self) -> None:
+        client = FakeMcpClient([screenshot_status(cooldown=1.5), screenshot_status()])
+        adapter = WindowsPcControlAdapter(client)  # type: ignore[arg-type]
+        with patch("rigpilot.live_adapters.asyncio.sleep", new=AsyncMock()) as sleep:
+            asyncio.run(adapter.wait_for_screenshot_ready())
+        self.assertEqual(client.json_calls, ["get_pc_status", "get_pc_status"])
+        sleep.assert_awaited_once_with(1.6)
+
+    def test_empty_screenshot_response_retries_once_after_health_check(self) -> None:
+        client = FakeMcpClient(
+            [screenshot_status(), screenshot_status()],
+            [McpClientError("take_screenshot が画像を返しませんでした"), None],
+        )
+        adapter = WindowsPcControlAdapter(client)  # type: ignore[arg-type]
+        asyncio.run(adapter.take_screenshot())
+        self.assertEqual(client.image_calls, 2)
+        self.assertEqual(client.json_calls, ["get_pc_status", "get_pc_status"])
+
+    def test_suspended_screenshot_does_not_retry(self) -> None:
+        client = FakeMcpClient(
+            [screenshot_status(blocked=30)],
+            [McpClientError("take_screenshot がエラーを返しました")],
+        )
+        adapter = WindowsPcControlAdapter(client)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ScreenshotUnavailableError, "TEMPORARILY_SUSPENDED"):
+            asyncio.run(adapter.take_screenshot())
+        self.assertEqual(client.image_calls, 1)
+
     def make_record(self) -> tuple[TemporaryDirectory[str], object]:
         temporary = TemporaryDirectory()
         root = Path(temporary.name)
@@ -132,7 +206,7 @@ class SafeProbeTests(unittest.TestCase):
             self.assertTrue(report.source_hash_unchanged)
             self.assertTrue(report.working_hash_unchanged)
             self.assertEqual(cubism.set_calls, [15, 30, 7])
-            self.assertEqual(cubism.clear_calls, 1)
+            self.assertEqual(cubism.clear_calls, 0)
             self.assertEqual(pc_control.focuses, 1)
             self.assertEqual(record.state, WorkflowState.COMPLETED)
             self.assertNotIn("cubism_edit", cubism.called_tools)
@@ -144,7 +218,7 @@ class SafeProbeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 asyncio.run(make_probe(cubism, FakePcControl(screenshot_failure=True)).run(record))
             self.assertEqual(cubism.set_calls[-1], 7)
-            self.assertEqual(cubism.clear_calls, 1)
+            self.assertEqual(cubism.clear_calls, 0)
 
     def test_uid_change_stops_without_more_parameter_changes(self) -> None:
         temporary, record = self.make_record()
@@ -162,7 +236,7 @@ class SafeProbeTests(unittest.TestCase):
             with self.assertRaises(EmergencyStopError):
                 asyncio.run(make_probe(cubism, FakePcControl(stop_on_check=3)).run(record))
             self.assertEqual(cubism.set_calls, [7])
-            self.assertEqual(cubism.clear_calls, 1)
+            self.assertEqual(cubism.clear_calls, 0)
             self.assertEqual(record.state, WorkflowState.EMERGENCY_STOPPED)
 
     def test_restore_failure_requires_human_review(self) -> None:
@@ -181,7 +255,10 @@ class SafeProbeTests(unittest.TestCase):
             with self.assertRaisesRegex(ProbeError, "復元できません"):
                 asyncio.run(make_probe(cubism, FakePcControl()).run(record))
             self.assertEqual(cubism.set_calls[-2:], [7, 7])
-            self.assertEqual(cubism.clear_calls, 2)
+            self.assertEqual(cubism.clear_calls, 0)
+            attempts = record.validation_results[-1]["restore_attempts"]
+            self.assertEqual([item["readback_value"] for item in attempts], [8.0, 8.0])
+            self.assertEqual([item["preview_clear"] for item in attempts], ["not_called_after_restore"] * 2)
             self.assertEqual(record.state, WorkflowState.NEEDS_HUMAN_REVIEW)
 
     def test_source_hash_change_requires_human_review(self) -> None:

@@ -55,7 +55,15 @@ class McpToolSession:
 
     async def call_image(self, name: str, arguments: dict[str, Any] | None = None) -> None:
         result = await self._session.call_tool(name, arguments or {})
-        if result.isError or not any(getattr(item, "data", None) for item in result.content):
+        if result.isError:
+            messages = [
+                item.text.strip()
+                for item in result.content
+                if isinstance(getattr(item, "text", None), str) and item.text.strip()
+            ]
+            detail = f": {' '.join(messages)}" if messages else ""
+            raise McpClientError(f"{name} がエラーを返しました{detail}")
+        if not any(getattr(item, "data", None) for item in result.content):
             raise McpClientError(f"{name} が画像を返しませんでした")
 
 
