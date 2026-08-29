@@ -102,6 +102,9 @@ class FakePcControl:
         if self.screenshot_failure:
             raise RuntimeError("capture failed")
 
+    async def wait_for_screenshot_ready(self) -> None:
+        return None
+
 
 def make_probe(cubism: FakeCubism, pc_control: FakePcControl) -> SafeParameterProbe:
     return SafeParameterProbe(cubism, pc_control, focus_settle_seconds=0)

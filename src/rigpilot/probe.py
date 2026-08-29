@@ -196,6 +196,7 @@ class SafeParameterProbe:
         await self.pc_control.focus_cubism()
         await asyncio.sleep(self.focus_settle_seconds)
         await self._ensure_not_stopped()
+        await self.pc_control.wait_for_screenshot_ready()
         await self.pc_control.take_screenshot()
 
     async def _restore_and_readback(

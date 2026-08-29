@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -117,6 +118,18 @@ class WindowsPcControlAdapter:
 
     async def take_screenshot(self) -> None:
         await self.client.call_image("take_screenshot", {"monitor": 1, "max_width": 1280})
+
+    async def wait_for_screenshot_ready(self) -> None:
+        status = await self.get_status()
+        health = status.get("screenshot_policy", {}).get("health", {})
+        if not isinstance(health, dict):
+            return
+        wait_seconds = max(
+            float(health.get("blocked_seconds_remaining", 0) or 0),
+            float(health.get("cooldown_seconds_remaining", 0) or 0),
+        )
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds + 0.1)
 
     async def open_allowed_working_model(self, model_path: Path) -> None:
         await self.client.require_tools({"open_allowed_path"})
