@@ -30,6 +30,7 @@ class McpToolSession:
         result = await self._session.call_tool(name, arguments or {})
         if result.isError:
             raise McpClientError(f"{name} がエラーを返しました")
+        values: list[Any] = []
         for item in result.content:
             text = getattr(item, "text", None)
             if isinstance(text, str):
@@ -39,7 +40,11 @@ class McpToolSession:
                     raise McpClientError(f"{name} のJSON応答を読み取れません") from error
                 if isinstance(data, dict) and "Error" in data:
                     raise McpClientError(f"{name}: {data['Error']}")
-                return data
+                values.append(data)
+        if len(values) == 1:
+            return values[0]
+        if values:
+            return values
         raise McpClientError(f"{name} がJSONを返しませんでした")
 
     async def call_json(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
