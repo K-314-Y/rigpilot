@@ -26,7 +26,7 @@ _ALLOWED: dict[WorkflowState, set[WorkflowState]] = {
     WorkflowState.NEEDS_HUMAN_REVIEW: {WorkflowState.PAUSED, WorkflowState.CANCELED},
     WorkflowState.CANCELED: set(),
     WorkflowState.EMERGENCY_STOPPED: set(),
-    WorkflowState.COMPLETED: set(),
+    WorkflowState.COMPLETED: {WorkflowState.CONNECTING},
 }
 
 

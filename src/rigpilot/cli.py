@@ -15,6 +15,7 @@ from .mcp_client import McpClientError, open_mcp_session
 from .models import ProjectRecord, WorkflowState
 from .probe import ProbeError, SafeParameterProbe
 from .storage import JsonProjectStore
+from .validation import AutomaticModelValidator
 from .workspace import ProjectWorkspace, WorkspaceError, sha256_file
 
 
@@ -150,6 +151,14 @@ async def _run_probe(project_file: Path, config_path: Path) -> Any:
         return await SafeParameterProbe(CubismExternalEditAdapter(cubism_session), WindowsPcControlAdapter(pc_session)).run(record)
 
 
+async def _run_validation(project_file: Path, config_path: Path, *, dry_run: bool) -> Any:
+    record = JsonProjectStore().load(project_file)
+    config = McpConfiguration.load(config_path)
+    async with open_mcp_session(config.cubism_server()) as cubism_session, open_mcp_session(config.pc_control_server()) as pc_session:
+        validator = AutomaticModelValidator(CubismExternalEditAdapter(cubism_session), WindowsPcControlAdapter(pc_session))
+        return await (validator.dry_run(record) if dry_run else validator.run(record))
+
+
 async def _open_working_model(project_file: Path, config_path: Path) -> None:
     record = JsonProjectStore().load(project_file)
     working = _working_model_for_open(record)
@@ -235,6 +244,30 @@ def _verify_live(project_file: Path, config_path: Path) -> int:
     print(f"実機検証: {'OK' if outcome == 'passed' else '要確認'}")
     print(f"Parameter: {report.parameter_id}、画面取得: {report.screenshots_captured}回、復元読取り: {'一致' if report.restore_readback else '不一致'}")
     return 0 if outcome == "passed" else 2
+
+
+def _validate(project_file: Path, config_path: Path, *, dry_run: bool, as_json: bool) -> int:
+    checks, next_action = _print_doctor(project_file, config_path, as_json=False)
+    if checks.get("Safe Probe") != "READY":
+        print("モデル検査は開始していません。")
+        return 3 if next_action else 2
+    report = asyncio.run(_run_validation(project_file, config_path, dry_run=dry_run))
+    payload = report.to_dict()
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif dry_run:
+        print("モデル検査の予定（Parameterは変更していません）")
+        for check in payload["checks"]:
+            result = check["result"]
+            print(f"{check['name']}: {result}")
+    else:
+        print("RigPilot モデル検査")
+        for check in payload["checks"]:
+            print(f"{check['name']}: {check['result']}")
+        print(f"モデル復元: {'PASS' if report.all_restored and report.restore_readback else 'FAIL'}")
+        print(f"ファイル保護: {'PASS' if report.source_hash_unchanged and report.working_hash_unchanged else 'FAIL'}")
+        print(f"検査レポート: {report.report_path}")
+    return 0 if dry_run or (report.all_restored and report.restore_readback and report.source_hash_unchanged and report.working_hash_unchanged) else 2
 
 
 def _resume_after_review(project_file: Path) -> None:
@@ -339,6 +372,12 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--project", required=True, type=Path, help="公式サンプルから作ったproject.jsonへのパス")
     verify.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
 
+    validate = subcommands.add_parser("validate", help="モデルの基本動作を安全に一巡検査します。")
+    validate.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
+    validate.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
+    validate.add_argument("--dry-run", action="store_true", help="Parameterを変更せず、検査予定だけを表示します。")
+    validate.add_argument("--json", action="store_true", help="機械可読なJSONで表示します。")
+
     open_working = subcommands.add_parser("open-working", help="安全なworkingコピーを既定アプリで開きます。")
     open_working.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     open_working.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
@@ -379,6 +418,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "verify-live":
             return _verify_live(args.project, args.config)
+        if args.command == "validate":
+            return _validate(args.project, args.config, dry_run=args.dry_run, as_json=args.json)
         if args.command == "open-working":
             asyncio.run(_open_working_model(args.project, args.config))
             print("workingコピーを開く要求を送信しました。Windowsの確認が出た場合は内容を確認して承認してください。")

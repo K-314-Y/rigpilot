@@ -48,12 +48,26 @@
 
 2026-08-29に公式サンプルのworkingコピーで実機検証しました。`ParamAngleX`を`0.0 → 15.0 → 30.0 → 0.0`として一時操作し、Baseline、2回のProbe、復元後の4枚の画面取得、復元読取り一致、3ファイルのSHA-256不変、利用者の画面目視確認を確認しました。
 
+## Phase 1: Automatic Live2D Model Validation
+
+コード実装済み・Fake MCP確認済み・公式サンプルでの実機確認済みです。
+
+- `rigpilot validate --dry-run`はCubismのParameter一覧と開始時値を読み取り、変更せずに検査予定を表示する
+- `rigpilot validate`は顔、まばたき、視線、口、体の既存Parameterだけを検査する。存在しない項目は`SKIPPED`であり失敗ではない
+- 各状態で検査対象全体の開始時値と今回の値をまとめて送るため、複数Parameter検査でも他の対象を開始時値に維持する
+- 各状態でParameter読取りと画面取得を確認し、各検査後と最終処理で全対象Parameterを開始時値へ復元・読取り確認する
+- スクリーンショット失敗、MCP失敗、Identity不一致、Emergency Stop、復元不一致では後続検査を中止し、復元とSHA-256確認を優先する
+- `reports/phase-1-validation-*.json`に詳細レポートを保存する。画像本体は保存しない
+- Save、Export、構造編集、削除、画像による自動修正は実行しない
+
+2026-08-29に公式サンプルのworkingコピーで実行しました。顔（左右・上下・傾き）、まばたき、視線（左右・上下）、口（開閉・表情）、体（左右・上下）の10カテゴリがPASS、`ParamBodyAngleZ`がない体の傾きはSKIPPEDでした。30回の画面取得、全対象Parameterの復元読取り一致、3ファイルのSHA-256不変、保存・書き出し・構造編集・削除未実行、利用者の中立状態目視確認を記録しました。詳細はプロジェクトの`reports/phase-1-validation-20260829T074217Z.json`にあります。
+
 ## 検証状態
 
-- IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、setup/doctor/verify-live CLI、使用書
-- MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗、復元読取り不一致の1回再試行、source/working SHA-256変化、スクリーンショット待機・一時休止・1回再試行
+- IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、setup/doctor/verify-live/validate CLI、使用書
+- MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗、復元読取り不一致の1回再試行、source/working SHA-256変化、スクリーンショット待機・一時休止・1回再試行、Phase 1のPlan生成、SKIPPED、複数Parameter復元、dry-run、JSONレポート
 - WINDOWS VERIFIED: Windows PC Control MCPの接続、Cubismウィンドウ検出、クールダウン適用下の連続スクリーンショット4回、緊急停止OFF
-- CUBISM VERIFIED: Allow承認、workingコピーの識別照合、`ParamAngleX`の一時操作・復元・読取り一致、4枚の画面取得、利用者の中立状態目視確認
+- CUBISM VERIFIED: Allow承認、workingコピーの識別照合、`ParamAngleX`の一時操作・復元・読取り一致、Phase 1の10カテゴリPASS・30回の画面取得、利用者の中立状態目視確認
 - VERIFIED IN THIS RUN: 公式原本、source、workingのSHA-256不変。保存、書き出し、構造編集、削除は実行していない
 - UNVERIFIED: 他のCubismバージョン、別モデル、別Windows環境での再現性
 

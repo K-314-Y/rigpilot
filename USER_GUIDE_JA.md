@@ -1,12 +1,12 @@
-# RigPilot 使用書（Phase 0B.1）
+# RigPilot 使用書（Phase 1）
 
 Python、Git、MCP、Live2D Cubismに詳しくない方向けの手順です。
 
 ## RigPilotとは
 
-RigPilotは、AIがLive2D Cubismを安全な範囲で確認することを助けるローカルツールです。Phase 0B.1は完成製品ではありません。公式サンプルモデルの**作業コピー**をCubismで確認し、既存のParameterを一時的に動かし、画面を取得して、開始時の値へ戻せるかを検証します。
+RigPilotは、AIがLive2D Cubismを安全な範囲で確認することを助けるローカルツールです。Phase 1は完成製品ではありません。公式サンプルモデルの**作業コピー**をCubismで確認し、既存のParameterを一時的に動かして基本動作を検査し、開始時の値へ戻せるかを確認します。
 
-この段階で自動制作、保存、書き出し、Parameter・Part・Deformerの構造変更はしません。実機での検証結果は、まだ「未確認」から始まります。
+この段階で自動制作、保存、書き出し、Parameter・Part・Deformerの構造変更はしません。公式サンプルのworkingコピーでは実機確認済みですが、別のモデルや別の環境で同じ結果になることを事前に保証するものではありません。
 
 ## 最短で試す
 
@@ -42,7 +42,7 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m rigpilot status
 ```
 
-`RigPilot: 準備完了（Phase 0B.1）`と表示されれば成功です。失敗した場合は、Python 3.11以上と、RigPilotフォルダーを開いていることを確認してください。
+`RigPilot: 準備完了（Phase 1）`と表示されれば成功です。失敗した場合は、Python 3.11以上と、RigPilotフォルダーを開いていることを確認してください。
 
 ### 2. PC Controlの場所を設定する
 
@@ -116,6 +116,26 @@ RigPilotは、model UID、document UID、workingパス、編集モード、既�
 
 `verify-live`内でCubismを前面化するPC Controlの承認は最初の1回だけです。その後の画面取得では、同じ検証内で追加の前面化承認を要求しません。別のコマンドとして`open-working`を実行する場合は、既存PC Controlの確認が別途表示されることがあります。
 
+## Phase 1のモデル検査
+
+まず、モデルを動かさずに検査予定を確認できます。
+
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot validate --project .\projects\official-sample-check\project.json --dry-run
+```
+
+`PLANNED`は検査する項目、`SKIPPED`はそのモデルに必要なParameterがない項目です。`SKIPPED`はエラーではありません。
+
+予定が問題なければ、基本動作の検査を開始します。**開始から結果表示までCubismを操作しないでください。** Windowsの正式な承認ダイアログだけは操作できます。
+
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot validate --project .\projects\official-sample-check\project.json
+```
+
+RigPilotは顔、まばたき、視線、口、体について、モデルに実在する項目だけを検査します。各状態で画面とParameter値を確認し、各項目の終了時と最後に、すべて開始時の状態へ戻します。画面画像そのものは保存しませんが、結果は`reports`フォルダーのJSONレポートと監査ログに記録されます。
+
+結果では、`PASS`は基本動作を確認できた、`WARNING`は確認候補、`SKIPPED`はその項目がない、`FAIL`は安全に停止した、という意味です。Phase 1は自動修正を行いません。
+
 ## 正常終了時に確認すること
 
 - Cubism上のモデルが開始時の位置へ戻っている
@@ -124,7 +144,7 @@ RigPilotは、model UID、document UID、workingパス、編集モード、既�
 - `logs\audit.jsonl`に結果がある（画像・認証情報は含めない）
 - エラー表示がない
 
-実機で未実施の項目は、成功したように扱いません。
+この公式サンプルではPhase 1の9カテゴリを実機確認済みです。別モデル・別環境の項目は、成功したように扱いません。
 
 ## エラーと対処
 
@@ -136,6 +156,7 @@ RigPilotは、model UID、document UID、workingパス、編集モード、既�
 | model UIDが変わった | 別のモデルへ切り替わった可能性があります。保存せず、workingコピーだけが開かれているか確認します。 |
 | Screenshot取得失敗 | Probeは復元を試みます。連続実行せず、CubismウィンドウとPC Controlの状態を確認します。 |
 | Restore Readbackが不一致 | 1回の再試行後に停止します。Cubismで開始時の値を確認し、保存せずに状況を確認してください。 |
+| モデル検査が途中で停止した | RigPilotは開始時の値への復元を優先します。結果表示後にモデルが開始時の状態へ戻っているか確認し、`reports`のレポートを確認してください。 |
 | `failed` / `needs_human_review` | RigPilotが停止した理由と、開始時の値・SHA-256を確認します。確認後の再開はRigPilotに依頼してください。 |
 | Emergency Stop | 自動再開しません。次章を確認します。 |
 
@@ -152,7 +173,7 @@ RigPilotは、model UID、document UID、workingパス、編集モード、既�
 
 ## 安全について
 
-Phase 0B.1では、元の`.cmo3`を変更・保存せず、モデルを保存せず、Parameter構造、Part、Deformerを変更せず、削除・exportもしません。一時的なParameter値だけを使用し、対象はworkingコピーに限定します。それでもソフトウェアなので絶対の保証はできません。大切なデータは別途バックアップしてください。
+Phase 1では、元の`.cmo3`を変更・保存せず、モデルを保存せず、Parameter構造、Part、Deformerを変更せず、削除・exportもしません。一時的なParameter値だけを使用し、対象はworkingコピーに限定します。それでもソフトウェアなので絶対の保証はできません。大切なデータは別途バックアップしてください。
 
 ## よくある質問
 
@@ -162,11 +183,11 @@ Phase 0B.1では、元の`.cmo3`を変更・保存せず、モデルを保存せ
 
 ### Live2Dを知らなくても使えますか？
 
-最終製品ではそれを目標にしています。Phase 0B.1ではCubismの起動、workingコピーを開くこと、Allowの承認、最後の目視確認は利用者が行います。
+最終製品ではそれを目標にしています。Phase 1ではCubismの起動、workingコピーを開くこと、Allowの承認、最後の目視確認は利用者が行います。
 
 ### AIが勝手に保存しますか？
 
-いいえ。Phase 0B.1には保存Toolを使う処理はありません。
+いいえ。Phase 1には保存Toolを使う処理はありません。
 
 ### AIがPC全体を操作できますか？
 

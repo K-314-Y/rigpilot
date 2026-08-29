@@ -46,6 +46,7 @@ class ParameterRange:
     minimum: float
     default: float
     maximum: float
+    name: str | None = None
 
     def accepts(self, value: float) -> bool:
         return self.minimum <= value <= self.maximum

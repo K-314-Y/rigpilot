@@ -63,25 +63,44 @@ class CubismExternalEditAdapter:
     async def get_parameters(self, model_uid: str) -> list[ParameterRange]:
         data = await self.client.call_json("cubism_get_parameters", {"model_uid": model_uid})
         return [
-            ParameterRange(str(item["Id"]), float(item["Min"]), float(item["Default"]), float(item["Max"]))
+            ParameterRange(
+                str(item["Id"]), float(item["Min"]), float(item["Default"]), float(item["Max"]),
+                str(item["Name"]) if item.get("Name") is not None else None,
+            )
             for item in _value(data, "Parameters")
         ]
 
     async def get_parameter_values(self, model_uid: str, parameter_id: str) -> float:
-        data = await self.client.call_json("cubism_get_parameter_values", {"model_uid": model_uid, "ids": [parameter_id]})
+        values = await self.get_parameter_value_map(model_uid, [parameter_id])
+        try:
+            return values[parameter_id]
+        except KeyError as error:
+            raise LiveAdapterError(f"現在値が見つかりません: {parameter_id}") from error
+
+    async def get_parameter_value_map(self, model_uid: str, parameter_ids: list[str]) -> dict[str, float]:
+        data = await self.client.call_json("cubism_get_parameter_values", {"model_uid": model_uid, "ids": parameter_ids})
         values = _value(data, "Parameters")
-        for item in values:
-            if item.get("Id") == parameter_id:
-                return float(item["Value"])
-        raise LiveAdapterError(f"現在値が見つかりません: {parameter_id}")
+        result = {str(item["Id"]): float(item["Value"]) for item in values if "Id" in item and "Value" in item}
+        missing = set(parameter_ids) - result.keys()
+        if missing:
+            raise LiveAdapterError(f"現在値が見つかりません: {', '.join(sorted(missing))}")
+        return result
 
     async def get_part_structure(self, model_uid: str) -> dict[str, Any]:
         return await self.client.call_json("cubism_get_part_structure", {"model_uid": model_uid})
 
     async def set_parameter_preview(self, model_uid: str, parameter_id: str, value: float) -> None:
+        await self.set_parameter_previews(model_uid, {parameter_id: value})
+
+    async def set_parameter_previews(self, model_uid: str, values: dict[str, float]) -> None:
+        if not values:
+            raise LiveAdapterError("一時Parameter値が指定されていません")
         await self.client.call_json(
             "cubism_set_parameter_values",
-            {"model_uid": model_uid, "parameters": [{"Id": parameter_id, "Value": value}]},
+            {
+                "model_uid": model_uid,
+                "parameters": [{"Id": parameter_id, "Value": value} for parameter_id, value in values.items()],
+            },
         )
 
 class WindowsPcControlAdapter:
