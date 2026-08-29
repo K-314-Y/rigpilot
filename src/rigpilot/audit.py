@@ -12,7 +12,9 @@ _SENSITIVE_KEYS = {"token", "authorization", "password", "secret", "screenshot",
 
 def _safe_metadata(value: dict[str, Any] | None) -> dict[str, Any]:
     return {
-        key: "[redacted]" if key.lower() in _SENSITIVE_KEYS else item
+        key: "[redacted]"
+        if any(sensitive in key.lower() for sensitive in _SENSITIVE_KEYS)
+        else item
         for key, item in (value or {}).items()
     }
 

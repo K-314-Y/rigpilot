@@ -31,7 +31,7 @@ class ProjectWorkspace:
         original = original_model.resolve()
         if original.suffix.lower() != ".cmo3" or not original.is_file():
             raise WorkspaceError("Phase 0 requires an existing .cmo3 file")
-        project_root = self.root / project_id
+        project_root = self._project_root(project_id)
         if project_root.exists():
             raise WorkspaceError(f"Project already exists: {project_id}")
         source_dir = project_root / "source"
@@ -50,6 +50,16 @@ class ProjectWorkspace:
             source_sha256=sha256_file(source),
             working_sha256=sha256_file(working),
         )
+
+    def _project_root(self, project_id: str) -> Path:
+        candidate = self.root / project_id
+        if not project_id or Path(project_id).name != project_id:
+            raise WorkspaceError("Project ID must be a single folder name")
+        try:
+            candidate.resolve().relative_to(self.root)
+        except ValueError as error:
+            raise WorkspaceError("Project ID must stay inside the workspace") from error
+        return candidate
 
     def checkpoint(self, record: ProjectRecord, name: str) -> Checkpoint:
         if sha256_file(record.source_model) != record.source_sha256:

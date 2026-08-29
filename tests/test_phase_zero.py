@@ -1,4 +1,6 @@
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -7,9 +9,11 @@ from rigpilot.adapters import (
     InMemoryPcControlAdapter,
     SafetyViolation,
 )
+from rigpilot.audit import AuditLogger
+from rigpilot.cli import main
 from rigpilot.engine import PhaseZeroEngine
 from rigpilot.models import ModelIdentity, ParameterRange, WorkflowState
-from rigpilot.workspace import sha256_file
+from rigpilot.workspace import ProjectWorkspace, WorkspaceError, sha256_file
 
 
 def engine_for(workspace: Path, working_path: Path, *, stopped: bool = False) -> PhaseZeroEngine:
@@ -25,6 +29,63 @@ def engine_for(workspace: Path, working_path: Path, *, stopped: bool = False) ->
 
 
 class PhaseZeroTests(unittest.TestCase):
+    def test_audit_log_redacts_secret_like_metadata(self) -> None:
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "audit.jsonl"
+            AuditLogger(path).record(
+                project_id="mia",
+                step="test",
+                adapter="test",
+                operation="test",
+                outcome="success",
+                model_uid=None,
+                document_uid=None,
+                metadata={"api_token": "must-not-appear", "screenshot_hash": "also-hidden"},
+            )
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("must-not-appear", text)
+            self.assertNotIn("also-hidden", text)
+
+    def test_project_id_cannot_escape_the_workspace(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "original.cmo3"
+            original.write_bytes(b"model")
+            with self.assertRaisesRegex(WorkspaceError, "single folder name"):
+                ProjectWorkspace(root / "projects").create_project("../outside", original)
+            self.assertFalse((root / "outside").exists())
+
+    def test_status_is_explicit_about_unimplemented_live_connections(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["status"]), 0)
+        self.assertIn("Cubism MCP: 未接続（実機連携は未実装）", output.getvalue())
+        self.assertIn("Parameter Probe: 未実装", output.getvalue())
+
+    def test_init_copies_a_model_without_touching_the_original(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "original.cmo3"
+            original.write_bytes(b"original-model")
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(
+                    main(
+                        [
+                            "init",
+                            "--workspace",
+                            str(root / "projects"),
+                            "--project-id",
+                            "mia",
+                            "--model",
+                            str(original),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertEqual(original.read_bytes(), b"original-model")
+            self.assertTrue((root / "projects" / "mia" / "project.json").is_file())
+
     def test_phase_zero_copies_original_and_restores_preview(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
