@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Safety-first orchestration foundation for Live2D Cubism workflows."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["mcp>=1.28,<2"]
 
 [project.scripts]
 rigpilot = "rigpilot.cli:main"

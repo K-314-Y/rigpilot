@@ -22,12 +22,29 @@
 - `rigpilot project-status` による元コピーの整合性確認
 - [一般利用者向け使用書](USER_GUIDE_JA.md)
 
+## Phase 0B: Real MCP Integration
+
+コード実装済み・Fake MCP確認済みです。
+
+- `rigpilot status --live`によるCubism MCP、PC Control MCP、Allow、緊急停止、Cubismウィンドウの読み取り確認
+- `rigpilot probe`による既存Parameterの一時値設定、画面取得、元値復元、値クリア
+- workingコピーとCubism文書のパス、model UID、document UID、編集モードの照合
+- 例外・スクリーンショット失敗・UID変更・緊急停止時の復元試行と停止
+- 編集・保存・書き出し・削除Toolを使わない制限
+
+WindowsおよびCubism実機での確認は未実施です。
+
+## 検証状態
+
+- IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、CLI、使用書
+- MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗
+- WINDOWS VERIFIED: 未確認（読み取り専用`status --live`は実行を試行したが、接続結果を取得できていない）
+- CUBISM VERIFIED: 未確認
+- UNVERIFIED: 実機でのAllow承認、PC側確認、3地点の画面取得、元値復元、`.cmo3`未保存
+
 ## 未実装
 
-- CubismExternalEditMCPとの実接続
-- Windows PC Control MCPとの実接続
-- 実機のParameter Probe、スクリーンショット、Neutral復元
 - Cubismの起動、保存、書き出し、モデル構造の編集
 - GUI、最終確認画面、AIによる自動修正
 
-したがって、Phase 0BのCLIはCubismを起動・操作・保存しません。`status` に表示される「未接続」「未実装」はエラーではなく、現在の正しい状態です。
+Probeは一時値をCubismへ送りますが、保存・構造編集は行いません。`--live`や`probe`の実機結果は、Cubism側のAllowとPC側の確認を完了するまで未検証です。
