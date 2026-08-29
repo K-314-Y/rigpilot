@@ -62,7 +62,10 @@ async def _live_status(config_path: Path) -> dict[str, str]:
         else:
             result["Cubism Window"] = "OK"
         if status.get("approved"):
-            result["Model"] = "OK" if await cubism.get_model_uid() else "要確認"
+            try:
+                result["Model"] = "OK" if await cubism.get_model_uid() else "要確認"
+            except McpClientError:
+                result["Model"] = "要確認"
         else:
             result["Model"] = "未確認"
         return result
@@ -145,6 +148,25 @@ async def _run_probe(project_file: Path, config_path: Path) -> Any:
     config = McpConfiguration.load(config_path)
     async with open_mcp_session(config.cubism_server()) as cubism_session, open_mcp_session(config.pc_control_server()) as pc_session:
         return await SafeParameterProbe(CubismExternalEditAdapter(cubism_session), WindowsPcControlAdapter(pc_session)).run(record)
+
+
+async def _open_working_model(project_file: Path, config_path: Path) -> None:
+    record = JsonProjectStore().load(project_file)
+    working = _working_model_for_open(record)
+    config = McpConfiguration.load(config_path)
+    async with open_mcp_session(config.pc_control_server()) as pc_session:
+        pc = WindowsPcControlAdapter(pc_session)
+        await pc.verify_schema()
+        if await pc.is_emergency_stopped():
+            raise ProbeError("Windows PC Control MCPは緊急停止中です")
+        await pc.open_allowed_working_model(working)
+
+
+def _working_model_for_open(record: ProjectRecord) -> Path:
+    working = record.working_model.resolve()
+    if working.suffix.casefold() != ".cmo3" or not working.is_file() or working.parent != (record.root / "working").resolve():
+        raise WorkspaceError("RigPilotのworkingコピーだけを開けます")
+    return working
 
 
 def _print_doctor(project_file: Path | None, config_path: Path, *, as_json: bool) -> tuple[dict[str, str], str | None]:
@@ -290,6 +312,10 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subcommands.add_parser("verify-live", help="公式サンプルの安全な実機検証を一括実行します。")
     verify.add_argument("--project", required=True, type=Path, help="公式サンプルから作ったproject.jsonへのパス")
     verify.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
+
+    open_working = subcommands.add_parser("open-working", help="安全なworkingコピーを既定アプリで開きます。")
+    open_working.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
+    open_working.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
     return parser
 
 
@@ -324,6 +350,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "verify-live":
             return _verify_live(args.project, args.config)
+        if args.command == "open-working":
+            asyncio.run(_open_working_model(args.project, args.config))
+            print("workingコピーを開く要求を送信しました。Windowsの確認が出た場合は内容を確認して承認してください。")
+            return 0
     except (OSError, ValueError, WorkspaceError, ConfigurationError, McpClientError, ProbeError) as error:
         print(f"RigPilotを実行できませんでした: {error}")
         print("元のモデルは変更していません。パスとファイル名を確認して、もう一度実行してください。")

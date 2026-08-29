@@ -119,3 +119,9 @@ class WindowsPcControlAdapter:
 
     async def take_screenshot(self) -> None:
         await self.client.call_image("take_screenshot", {"monitor": 1, "max_width": 1280})
+
+    async def open_allowed_working_model(self, model_path: Path) -> None:
+        await self.client.require_tools({"open_allowed_path"})
+        result = await self.client.call_json("open_allowed_path", {"path": str(model_path)})
+        if result.get("ok") is not True:
+            raise LiveAdapterError("workingコピーをCubismで開けませんでした")

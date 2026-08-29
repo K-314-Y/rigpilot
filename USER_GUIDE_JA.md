@@ -13,7 +13,7 @@ RigPilotは、AIがLive2D Cubismを安全な範囲で確認することを助け
 1. Live2D公式サイトで、公式サンプルの利用条件を確認してから、公式サンプルを自分でダウンロードします。RigPilotは規約へ同意したり、サンプルをダウンロードしたりしません。
 2. サンプル内の`.cmo3`の場所をRigPilotへ渡します。自分のLive2Dモデルは不要です。
 3. RigPilotが`source/`と`working/`のコピーを作ります。
-4. Live2D Cubismを起動し、**workingコピーだけ**を開きます。
+4. RigPilotで**workingコピーだけ**を開きます。
 5. Cubismの外部アプリ連携でAllowを承認します。
 6. `verify-live`を実行し、最後にCubism上で元の位置へ戻ったことを確認します。
 
@@ -70,12 +70,17 @@ py -3 -m venv .venv
 
 成功すると、`projects\official-sample-check\source\`と`working\`に別コピーが作られます。元のダウンロードファイルは直接操作しません。
 
+次でworkingコピーだけを既定アプリ（Cubism）で開けます。Windowsの確認が表示された場合は、パスが`working`内であることを確認して承認します。
+
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot open-working --project .\projects\official-sample-check\project.json
+```
+
 ## Cubism側の準備
 
-1. Live2D Cubismを起動します。
-2. 上で作成された`working\`内の`.cmo3`だけを開きます。`source\`や公式ダウンロード原本は開きません。
-3. CubismExternalEditMCPの公式手順に従い、「外部アプリケーション連携」を有効にします。
-4. Cubismが表示するAllowを承認します。
+1. `open-working`で開いた`working\`内の`.cmo3`だけを確認します。`source\`や公式ダウンロード原本は開きません。
+2. CubismExternalEditMCPの公式手順に従い、「外部アプリケーション連携」を有効にします。
+3. Cubismが表示するAllowを承認します。
 
 Allowは接続と一時Parameter操作の許可です。Phase 0B.1ではEdit（モデル構造を永続変更する許可）は要求しません。Cubismを再起動した場合、連携設定とAllowを再確認してください。
 

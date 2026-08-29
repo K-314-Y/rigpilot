@@ -40,6 +40,7 @@ WindowsおよびCubism実機での確認は未実施です。
 
 - `rigpilot setup`は既存設定を上書きせず、見つけられたWindows PC Control MCPをローカル設定へ記録
 - `rigpilot doctor`は安全な作業コピー、MCP、Cubism、Allow、緊急停止を実際に確認できた項目だけ表示し、待機時は次の1操作を案内
+- `rigpilot open-working`はPC Control MCPの既存許可範囲とWindows承認を通して、workingコピーだけを既定アプリで開く
 - `rigpilot verify-live`はDoctor、read-only preflight、Baseline/Probe/復元後の画面取得、開始時値への復元と読取り確認、SHA-256の前後比較、監査ログを一括実行
 - 公式サンプル原本、`source`、`working`をSHA-256で監視し、変更があれば`needs_human_review`として停止
 - Edit権限、保存、書き出し、構造編集、削除を要求・実行しない
