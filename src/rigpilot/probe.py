@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from math import isclose
@@ -186,6 +187,7 @@ class SafeParameterProbe:
     async def _capture(self, record: ProjectRecord, identity: LiveIdentity) -> None:
         await self._guard_identity(record, identity)
         await self.pc_control.focus_cubism()
+        await asyncio.sleep(0.5)
         await self._ensure_not_stopped()
         await self.pc_control.take_screenshot()
 
