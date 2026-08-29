@@ -86,6 +86,7 @@ class FakePcControl:
         self.stop_on_check = stop_on_check
         self.stop_checks = 0
         self.screenshots = 0
+        self.focuses = 0
 
     async def verify_schema(self) -> None:
         return None
@@ -95,7 +96,7 @@ class FakePcControl:
         return self.stop_on_check == self.stop_checks
 
     async def focus_cubism(self) -> None:
-        return None
+        self.focuses += 1
 
     async def take_screenshot(self) -> None:
         self.screenshots += 1
@@ -123,7 +124,8 @@ class SafeProbeTests(unittest.TestCase):
         temporary, record = self.make_record()
         with temporary:
             cubism = FakeCubism(record.working_model)
-            report = asyncio.run(make_probe(cubism, FakePcControl()).run(record))
+            pc_control = FakePcControl()
+            report = asyncio.run(make_probe(cubism, pc_control).run(record))
             self.assertEqual(report.screenshots_captured, 4)
             self.assertTrue(report.restored)
             self.assertTrue(report.restore_readback)
@@ -131,6 +133,7 @@ class SafeProbeTests(unittest.TestCase):
             self.assertTrue(report.working_hash_unchanged)
             self.assertEqual(cubism.set_calls, [15, 30, 7])
             self.assertEqual(cubism.clear_calls, 1)
+            self.assertEqual(pc_control.focuses, 1)
             self.assertEqual(record.state, WorkflowState.COMPLETED)
             self.assertNotIn("cubism_edit", cubism.called_tools)
 

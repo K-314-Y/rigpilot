@@ -80,6 +80,7 @@ class SafeParameterProbe:
         source_unchanged = False
         working_unchanged = False
         original_unchanged: bool | None = None
+        cubism_focused = False
         failure: Exception | None = None
         try:
             if source_before != record.source_sha256 or working_before != record.working_sha256:
@@ -100,7 +101,8 @@ class SafeParameterProbe:
             await self.cubism.get_part_structure(identity.model_uid)
             parameter = self._select_parameter(parameters)
             original_value = await self.cubism.get_parameter_values(identity.model_uid, parameter.parameter_id)
-            await self._capture(record, identity)
+            await self._capture(record, identity, focus=True)
+            cubism_focused = True
             screenshots += 1
             self._move(record, WorkflowState.PROBING)
             for value in self._test_values(parameter):
@@ -109,7 +111,8 @@ class SafeParameterProbe:
                 await self.cubism.set_parameter_preview(identity.model_uid, parameter.parameter_id, value)
                 self._move(record, WorkflowState.CAPTURING)
                 await self._guard_identity(record, identity)
-                await self._capture(record, identity)
+                await self._capture(record, identity, focus=not cubism_focused)
+                cubism_focused = True
                 screenshots += 1
                 tested.append(value)
                 self._move(record, WorkflowState.PROBING)
@@ -134,7 +137,7 @@ class SafeParameterProbe:
                     restored = True
                     if original_failure is None:
                         await self._guard_identity(record, identity)
-                        await self._capture(record, identity)
+                        await self._capture(record, identity, focus=not cubism_focused)
                         screenshots += 1
                 except Exception as restore_error:  # noqa: BLE001
                     record.state = WorkflowState.NEEDS_HUMAN_REVIEW
@@ -191,10 +194,11 @@ class SafeParameterProbe:
         if await self.pc_control.is_emergency_stopped():
             raise EmergencyStopError("Windows PC Control MCPは緊急停止中です")
 
-    async def _capture(self, record: ProjectRecord, identity: LiveIdentity) -> None:
+    async def _capture(self, record: ProjectRecord, identity: LiveIdentity, *, focus: bool) -> None:
         await self._guard_identity(record, identity)
-        await self.pc_control.focus_cubism()
-        await asyncio.sleep(self.focus_settle_seconds)
+        if focus:
+            await self.pc_control.focus_cubism()
+            await asyncio.sleep(self.focus_settle_seconds)
         await self._ensure_not_stopped()
         await self.pc_control.wait_for_screenshot_ready()
         await self.pc_control.take_screenshot()
