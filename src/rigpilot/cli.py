@@ -239,8 +239,8 @@ def _verify_live(project_file: Path, config_path: Path) -> int:
 
 def _resume_after_review(project_file: Path) -> None:
     record = JsonProjectStore().load(project_file)
-    if record.state != WorkflowState.NEEDS_HUMAN_REVIEW:
-        raise WorkspaceError("needs_human_review状態のプロジェクトだけを再開できます")
+    if record.state not in {WorkflowState.FAILED, WorkflowState.NEEDS_HUMAN_REVIEW}:
+        raise WorkspaceError("failedまたはneeds_human_review状態のプロジェクトだけを再開できます")
     if sha256_file(record.source_model) != record.source_sha256 or sha256_file(record.working_model) != record.working_sha256:
         raise WorkspaceError("sourceまたはworkingコピーのSHA-256が一致しないため再開できません")
     if (
@@ -343,7 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     open_working.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     open_working.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
 
-    resume_review = subcommands.add_parser("resume-review", help="確認済みのneeds_human_review状態を安全に再開待機へ戻します。")
+    resume_review = subcommands.add_parser("resume-review", help="確認済みの停止状態を安全に再開待機へ戻します。")
     resume_review.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     return parser
 

@@ -148,6 +148,19 @@ class PhaseZeroTests(unittest.TestCase):
             _resume_after_review(root / "projects" / "official" / "project.json")
             self.assertEqual(JsonProjectStore().load(root / "projects" / "official" / "project.json").state, WorkflowState.PAUSED)
 
+    def test_resume_review_allows_verified_failed_state(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "official-sample.cmo3"
+            original.write_bytes(b"official-sample")
+            record = ProjectWorkspace(root / "projects").create_project("official", original)
+            from rigpilot.storage import JsonProjectStore
+
+            record.state = WorkflowState.FAILED
+            JsonProjectStore().save(record)
+            _resume_after_review(root / "projects" / "official" / "project.json")
+            self.assertEqual(JsonProjectStore().load(root / "projects" / "official" / "project.json").state, WorkflowState.PAUSED)
+
     def test_phase_zero_copies_original_and_restores_preview(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

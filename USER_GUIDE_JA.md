@@ -134,7 +134,7 @@ RigPilotは、model UID、document UID、workingパス、編集モード、既�
 | model UIDが変わった | 別のモデルへ切り替わった可能性があります。保存せず、workingコピーだけが開かれているか確認します。 |
 | Screenshot取得失敗 | Probeは復元を試みます。連続実行せず、CubismウィンドウとPC Controlの状態を確認します。 |
 | Restore Readbackが不一致 | 1回の再試行後に停止します。Cubismで開始時の値を確認し、保存せずに状況を確認してください。 |
-| `needs_human_review` | RigPilotが停止した理由と、開始時の値・SHA-256を確認します。確認後の再開はRigPilotに依頼してください。 |
+| `failed` / `needs_human_review` | RigPilotが停止した理由と、開始時の値・SHA-256を確認します。確認後の再開はRigPilotに依頼してください。 |
 | Emergency Stop | 自動再開しません。次章を確認します。 |
 
 ## 緊急停止
