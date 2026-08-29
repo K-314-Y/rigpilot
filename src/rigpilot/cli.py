@@ -12,7 +12,7 @@ from .audit import AuditLogger
 from .config import ConfigurationError, McpConfiguration
 from .live_adapters import CubismExternalEditAdapter, WindowsPcControlAdapter
 from .mcp_client import McpClientError, open_mcp_session
-from .models import ProjectRecord
+from .models import ProjectRecord, WorkflowState
 from .probe import ProbeError, SafeParameterProbe
 from .storage import JsonProjectStore
 from .workspace import ProjectWorkspace, WorkspaceError, sha256_file
@@ -237,6 +237,32 @@ def _verify_live(project_file: Path, config_path: Path) -> int:
     return 0 if outcome == "passed" else 2
 
 
+def _resume_after_review(project_file: Path) -> None:
+    record = JsonProjectStore().load(project_file)
+    if record.state != WorkflowState.NEEDS_HUMAN_REVIEW:
+        raise WorkspaceError("needs_human_review状態のプロジェクトだけを再開できます")
+    if sha256_file(record.source_model) != record.source_sha256 or sha256_file(record.working_model) != record.working_sha256:
+        raise WorkspaceError("sourceまたはworkingコピーのSHA-256が一致しないため再開できません")
+    if (
+        record.original_model is not None
+        and record.original_sha256 is not None
+        and (not record.original_model.is_file() or sha256_file(record.original_model) != record.original_sha256)
+    ):
+        raise WorkspaceError("公式サンプル原本のSHA-256が一致しないため再開できません")
+    record.state = WorkflowState.PAUSED
+    JsonProjectStore().save(record)
+    AuditLogger(record.root / "logs" / "audit.jsonl").record(
+        project_id=record.project_id,
+        step="review_acknowledged",
+        adapter="workspace",
+        operation="resume_after_human_review",
+        outcome="success",
+        model_uid=record.model_uid,
+        document_uid=record.document_uid,
+        metadata={"saved": False, "source_hash_unchanged": True, "working_hash_unchanged": True},
+    )
+
+
 def _create_project(*, workspace: Path, project_id: str, model: Path) -> ProjectRecord:
     record = ProjectWorkspace(workspace).create_project(project_id, model)
     JsonProjectStore().save(record)
@@ -316,6 +342,9 @@ def build_parser() -> argparse.ArgumentParser:
     open_working = subcommands.add_parser("open-working", help="安全なworkingコピーを既定アプリで開きます。")
     open_working.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     open_working.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
+
+    resume_review = subcommands.add_parser("resume-review", help="確認済みのneeds_human_review状態を安全に再開待機へ戻します。")
+    resume_review.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     return parser
 
 
@@ -353,6 +382,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "open-working":
             asyncio.run(_open_working_model(args.project, args.config))
             print("workingコピーを開く要求を送信しました。Windowsの確認が出た場合は内容を確認して承認してください。")
+            return 0
+        if args.command == "resume-review":
+            _resume_after_review(args.project)
+            print("確認済みとして再開待機へ戻しました。モデルやファイルは変更していません。")
             return 0
     except (OSError, ValueError, WorkspaceError, ConfigurationError, McpClientError, ProbeError) as error:
         print(f"RigPilotを実行できませんでした: {error}")

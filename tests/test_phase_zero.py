@@ -10,7 +10,7 @@ from rigpilot.adapters import (
     SafetyViolation,
 )
 from rigpilot.audit import AuditLogger
-from rigpilot.cli import _working_model_for_open, main
+from rigpilot.cli import _resume_after_review, _working_model_for_open, main
 from rigpilot.engine import PhaseZeroEngine
 from rigpilot.models import ModelIdentity, ParameterRange, WorkflowState
 from rigpilot.workspace import ProjectWorkspace, WorkspaceError, sha256_file
@@ -134,6 +134,19 @@ class PhaseZeroTests(unittest.TestCase):
             record.working_model = record.source_model
             with self.assertRaisesRegex(WorkspaceError, "workingコピー"):
                 _working_model_for_open(record)
+
+    def test_resume_review_requires_unchanged_copies(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "official-sample.cmo3"
+            original.write_bytes(b"official-sample")
+            record = ProjectWorkspace(root / "projects").create_project("official", original)
+            from rigpilot.storage import JsonProjectStore
+
+            record.state = WorkflowState.NEEDS_HUMAN_REVIEW
+            JsonProjectStore().save(record)
+            _resume_after_review(root / "projects" / "official" / "project.json")
+            self.assertEqual(JsonProjectStore().load(root / "projects" / "official" / "project.json").state, WorkflowState.PAUSED)
 
     def test_phase_zero_copies_original_and_restores_preview(self) -> None:
         with TemporaryDirectory() as temporary:
