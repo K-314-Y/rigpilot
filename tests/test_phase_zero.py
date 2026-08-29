@@ -3,6 +3,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from rigpilot.adapters import (
     InMemoryCubismAdapter,
@@ -10,9 +11,10 @@ from rigpilot.adapters import (
     SafetyViolation,
 )
 from rigpilot.audit import AuditLogger
-from rigpilot.cli import _resume_after_review, _working_model_for_open, main
+from rigpilot.cli import _resume_after_review, _validate, _working_model_for_open, main
 from rigpilot.engine import PhaseZeroEngine
 from rigpilot.models import ModelIdentity, ParameterRange, WorkflowState
+from rigpilot.validation import ValidationPlan, ValidationReport
 from rigpilot.workspace import ProjectWorkspace, WorkspaceError, sha256_file
 
 
@@ -59,8 +61,28 @@ class PhaseZeroTests(unittest.TestCase):
         output = StringIO()
         with redirect_stdout(output):
             self.assertEqual(main(["status"]), 0)
-        self.assertIn("Live Verification: 未実施", output.getvalue())
-        self.assertIn("Safe Parameter Probe: 実装済み（実機未確認）", output.getvalue())
+        self.assertIn("Live Verification: 公式サンプルで確認済み", output.getvalue())
+        self.assertIn("Safe Parameter Probe: 実装済み（公式サンプルで確認済み）", output.getvalue())
+
+    def test_validate_uses_a_single_validation_session_without_doctor(self) -> None:
+        plan = ValidationPlan(discovered_parameters=(), checks=())
+        report = ValidationReport(
+            phase="1", dry_run=True, model_uid="model-1", document_uid="document-1", plan=plan,
+            checks=(), screenshots_captured=0, all_restored=True, restore_readback=True,
+            source_hash_unchanged=True, working_hash_unchanged=True, original_hash_unchanged=True,
+        )
+
+        async def run_validation(*_args: object, **_kwargs: object) -> ValidationReport:
+            return report
+
+        output = StringIO()
+        with (
+            patch("rigpilot.cli._run_validation", run_validation),
+            patch("rigpilot.cli._print_doctor", side_effect=AssertionError("Doctor must not start another MCP session")),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(_validate(Path("project.json"), Path("config.json"), dry_run=True, as_json=False), 0)
+        self.assertIn("モデル検査の予定", output.getvalue())
 
     def test_init_copies_a_model_without_touching_the_original(self) -> None:
         with TemporaryDirectory() as temporary:

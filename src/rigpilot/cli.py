@@ -1,4 +1,4 @@
-"""Beginner-facing, safety-first commands for Phase 0B.1."""
+"""Beginner-facing, safety-first commands for Phase 1."""
 
 from __future__ import annotations
 
@@ -22,11 +22,11 @@ from .workspace import ProjectWorkspace, WorkspaceError, sha256_file
 def status_payload() -> dict[str, str]:
     """Report only the shipped capability, never an unverified live state."""
     return {
-        "RigPilot": "準備完了（Phase 0B.1）",
-        "Live Verification": "未実施",
+        "RigPilot": "準備完了（Phase 1）",
+        "Live Verification": "公式サンプルで確認済み",
         "Cubism MCP": "設定後に doctor で確認",
         "Windows PC Control MCP": "設定後に doctor で確認",
-        "Safe Parameter Probe": "実装済み（実機未確認）",
+        "Safe Parameter Probe": "実装済み（公式サンプルで確認済み）",
     }
 
 
@@ -247,10 +247,9 @@ def _verify_live(project_file: Path, config_path: Path) -> int:
 
 
 def _validate(project_file: Path, config_path: Path, *, dry_run: bool, as_json: bool) -> int:
-    checks, next_action = _print_doctor(project_file, config_path, as_json=False)
-    if checks.get("Safe Probe") != "READY":
-        print("モデル検査は開始していません。")
-        return 3 if next_action else 2
+    # AutomaticModelValidator performs the full safety preflight in this one
+    # MCP session.  Do not run Doctor here: a separate session can cause a
+    # second Windows/Python approval dialog without adding a safety check.
     report = asyncio.run(_run_validation(project_file, config_path, dry_run=dry_run))
     payload = report.to_dict()
     if as_json:

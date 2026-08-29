@@ -102,6 +102,8 @@ Windows PC Control MCPのREADMEどおりに準備します。RigPilotで必要�
 
 `OK`はその項目を確認できた意味です。`AWAITING USER ACTION`、`待機中`、`要確認`は失敗扱いではなく、表示された「次の操作」を一つだけ行う状態です。Cubismが起動していない、workingモデルが開かれていない、Allowが未承認の場合に、存在しない`OK`は表示しません。
 
+Doctorは接続状態を先に見たいときだけ使う任意の確認です。`validate`は同じ安全確認を検査用の1回の接続の中で行うため、すぐに検査する場合はDoctorを続けて実行する必要はありません。これにより、Windows/Pythonの承認ダイアログが余分に出ることを避けます。
+
 ## Phase 0B.1の実行
 
 Doctorが`Safe Probe: READY`になったら、一括検証を実行します。
