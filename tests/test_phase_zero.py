@@ -55,12 +55,12 @@ class PhaseZeroTests(unittest.TestCase):
                 ProjectWorkspace(root / "projects").create_project("../outside", original)
             self.assertFalse((root / "outside").exists())
 
-    def test_status_is_explicit_about_unimplemented_live_connections(self) -> None:
+    def test_status_is_explicit_about_unverified_live_connections(self) -> None:
         output = StringIO()
         with redirect_stdout(output):
             self.assertEqual(main(["status"]), 0)
-        self.assertIn("Cubism MCP: 未接続（実機連携は未実装）", output.getvalue())
-        self.assertIn("Parameter Probe: 未実装", output.getvalue())
+        self.assertIn("Live Verification: 未実施", output.getvalue())
+        self.assertIn("Safe Parameter Probe: 実装済み（実機未確認）", output.getvalue())
 
     def test_init_copies_a_model_without_touching_the_original(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -85,6 +85,45 @@ class PhaseZeroTests(unittest.TestCase):
                 )
             self.assertEqual(original.read_bytes(), b"original-model")
             self.assertTrue((root / "projects" / "mia" / "project.json").is_file())
+
+    def test_init_records_original_sample_hash(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "official-sample.cmo3"
+            original.write_bytes(b"official-sample")
+            record = ProjectWorkspace(root / "projects").create_project("official", original)
+            self.assertEqual(record.original_model, original.resolve())
+            self.assertEqual(record.original_sha256, sha256_file(original))
+
+    def test_doctor_marks_missing_configuration_as_awaiting_setup(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "official-sample.cmo3"
+            original.write_bytes(b"official-sample")
+            record = ProjectWorkspace(root / "projects").create_project("official", original)
+            from rigpilot.storage import JsonProjectStore
+
+            JsonProjectStore().save(record)
+            output = StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main(["doctor", "--project", str(root / "projects" / "official" / "project.json"), "--config", str(root / "missing.json")]), 0)
+            self.assertIn("Cubism MCP: AWAITING USER ACTION（未設定）", output.getvalue())
+            self.assertIn("次の操作:", output.getvalue())
+
+    def test_verify_live_does_not_probe_when_doctor_is_not_ready(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            original = root / "official-sample.cmo3"
+            original.write_bytes(b"official-sample")
+            record = ProjectWorkspace(root / "projects").create_project("official", original)
+            from rigpilot.storage import JsonProjectStore
+
+            JsonProjectStore().save(record)
+            output = StringIO()
+            with redirect_stdout(output):
+                result = main(["verify-live", "--project", str(root / "projects" / "official" / "project.json"), "--config", str(root / "missing.json")])
+            self.assertEqual(result, 3)
+            self.assertIn("実機Probeは開始していません", output.getvalue())
 
     def test_phase_zero_copies_original_and_restores_preview(self) -> None:
         with TemporaryDirectory() as temporary:

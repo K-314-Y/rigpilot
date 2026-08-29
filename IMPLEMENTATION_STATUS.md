@@ -34,13 +34,25 @@
 
 WindowsおよびCubism実機での確認は未実施です。
 
+## Phase 0B.1: Official Sample Model Live Verification
+
+コード実装済み・Fake MCP確認済みです。
+
+- `rigpilot setup`は既存設定を上書きせず、見つけられたWindows PC Control MCPをローカル設定へ記録
+- `rigpilot doctor`は安全な作業コピー、MCP、Cubism、Allow、緊急停止を実際に確認できた項目だけ表示し、待機時は次の1操作を案内
+- `rigpilot verify-live`はDoctor、read-only preflight、Baseline/Probe/復元後の画面取得、開始時値への復元と読取り確認、SHA-256の前後比較、監査ログを一括実行
+- 公式サンプル原本、`source`、`working`をSHA-256で監視し、変更があれば`needs_human_review`として停止
+- Edit権限、保存、書き出し、構造編集、削除を要求・実行しない
+
+公式サンプルの利用規約確認・ダウンロードと実機実行はまだ行っていません。よって、以下の実機状態は未確認です。
+
 ## 検証状態
 
-- IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、CLI、使用書
-- MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗
+- IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、setup/doctor/verify-live CLI、使用書
+- MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗、復元読取り不一致の1回再試行、source/working SHA-256変化
 - WINDOWS VERIFIED: 未確認（読み取り専用`status --live`は実行を試行したが、接続結果を取得できていない）
 - CUBISM VERIFIED: 未確認
-- UNVERIFIED: 実機でのAllow承認、PC側確認、3地点の画面取得、元値復元、`.cmo3`未保存
+- UNVERIFIED: 公式サンプルでのAllow承認、PC側確認、Baseline/Probe/復元後の画面取得、元値復元と読取り一致、SHA-256不変、`.cmo3`未保存
 
 ## 未実装
 

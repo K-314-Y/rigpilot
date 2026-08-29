@@ -49,6 +49,8 @@ class ProjectWorkspace:
             working_model=working,
             source_sha256=sha256_file(source),
             working_sha256=sha256_file(working),
+            original_model=original,
+            original_sha256=sha256_file(original),
         )
 
     def _project_root(self, project_id: str) -> Path:

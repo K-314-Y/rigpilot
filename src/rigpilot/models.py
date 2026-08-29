@@ -67,6 +67,8 @@ class ProjectRecord:
     working_model: Path
     source_sha256: str
     working_sha256: str
+    original_model: Path | None = None
+    original_sha256: str | None = None
     state: WorkflowState = WorkflowState.CREATED
     model_uid: str | None = None
     document_uid: str | None = None
@@ -83,6 +85,8 @@ class ProjectRecord:
         data = asdict(self)
         for key in ("root", "source_model", "working_model"):
             data[key] = str(data[key])
+        if data["original_model"] is not None:
+            data["original_model"] = str(data["original_model"])
         data["state"] = self.state.value
         data["checkpoints"] = [
             {**asdict(item), "path": str(item.path)} for item in self.checkpoints
@@ -95,6 +99,8 @@ class ProjectRecord:
         copied["root"] = Path(copied["root"])
         copied["source_model"] = Path(copied["source_model"])
         copied["working_model"] = Path(copied["working_model"])
+        if copied.get("original_model") is not None:
+            copied["original_model"] = Path(copied["original_model"])
         copied["state"] = WorkflowState(copied["state"])
         copied["checkpoints"] = [
             Checkpoint(

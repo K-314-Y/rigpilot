@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from math import isclose
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from .live_adapters import (
 from .models import ParameterRange, ProjectRecord, WorkflowState
 from .state_machine import transition
 from .storage import JsonProjectStore
+from .workspace import sha256_file
 
 
 class ProbeError(RuntimeError):
@@ -30,6 +32,10 @@ class IdentityMismatchError(ProbeError):
     pass
 
 
+class RestoreMismatchError(ProbeError):
+    pass
+
+
 @dataclass(frozen=True)
 class ProbeReport:
     parameter_id: str
@@ -37,6 +43,10 @@ class ProbeReport:
     tested_values: list[float]
     screenshots_captured: int
     restored: bool
+    restore_readback: bool
+    source_hash_unchanged: bool
+    working_hash_unchanged: bool
+    original_hash_unchanged: bool | None
     saved: bool = False
     status: str = "passed"
 
@@ -55,8 +65,19 @@ class SafeParameterProbe:
         screenshots = 0
         tested: list[float] = []
         restored = False
+        restore_readback = False
+        source_before = sha256_file(record.source_model)
+        working_before = sha256_file(record.working_model)
+        original_before = self._original_hash(record)
+        source_unchanged = False
+        working_unchanged = False
+        original_unchanged: bool | None = None
         failure: Exception | None = None
         try:
+            if source_before != record.source_sha256 or working_before != record.working_sha256:
+                raise ProbeError("Probe開始前にsourceまたはworkingコピーのSHA-256が一致しません")
+            if record.original_sha256 is not None and original_before != record.original_sha256:
+                raise ProbeError("Probe開始前に公式サンプル原本のSHA-256が一致しません")
             self._move(record, WorkflowState.CONNECTING)
             await self.cubism.verify_schema()
             await self.pc_control.verify_schema()
@@ -71,6 +92,8 @@ class SafeParameterProbe:
             await self.cubism.get_part_structure(identity.model_uid)
             parameter = self._select_parameter(parameters)
             original_value = await self.cubism.get_parameter_values(identity.model_uid, parameter.parameter_id)
+            await self._capture(record, identity)
+            screenshots += 1
             self._move(record, WorkflowState.PROBING)
             for value in self._test_values(parameter):
                 await self._guard_identity(record, identity)
@@ -78,9 +101,7 @@ class SafeParameterProbe:
                 await self.cubism.set_parameter_preview(identity.model_uid, parameter.parameter_id, value)
                 self._move(record, WorkflowState.CAPTURING)
                 await self._guard_identity(record, identity)
-                await self.pc_control.focus_cubism()
-                await self._ensure_not_stopped()
-                await self.pc_control.take_screenshot()
+                await self._capture(record, identity)
                 screenshots += 1
                 tested.append(value)
                 self._move(record, WorkflowState.PROBING)
@@ -95,25 +116,45 @@ class SafeParameterProbe:
             failure = error
         finally:
             failure_state = record.state
+            original_failure = failure
             if identity is not None and parameter is not None and original_value is not None:
                 try:
                     record.state = WorkflowState.RESTORING
-                    await self.cubism.set_parameter_preview(identity.model_uid, parameter.parameter_id, original_value)
-                    await self.cubism.clear_parameter_preview(identity.model_uid)
+                    restore_readback = await self._restore_and_readback(identity, parameter, original_value)
+                    if not restore_readback:
+                        raise RestoreMismatchError("元値の読取り確認が一致しません")
                     restored = True
+                    if original_failure is None:
+                        await self._guard_identity(record, identity)
+                        await self._capture(record, identity)
+                        screenshots += 1
                 except Exception as restore_error:  # noqa: BLE001
                     record.state = WorkflowState.NEEDS_HUMAN_REVIEW
-                    failure = ProbeError(f"元値を復元できませんでした: {restore_error}")
+                    if original_failure is None:
+                        failure = ProbeError(f"元値を復元できませんでした: {restore_error}")
                 else:
                     record.state = failure_state
-            self._record(record, parameter, original_value, tested, screenshots, restored, failure)
+            source_unchanged = sha256_file(record.source_model) == source_before
+            working_unchanged = sha256_file(record.working_model) == working_before
+            original_after = self._original_hash(record)
+            original_unchanged = original_before == original_after if original_before is not None else None
+            if not source_unchanged or not working_unchanged or original_unchanged is False:
+                record.state = WorkflowState.NEEDS_HUMAN_REVIEW
+                failure = ProbeError("Probe中に監視対象の.cmo3のSHA-256が変化しました")
+            self._record(
+                record, parameter, original_value, tested, screenshots, restored, restore_readback,
+                source_unchanged, working_unchanged, original_unchanged, failure,
+            )
         if failure is not None:
             raise failure
         record.state = WorkflowState.VALIDATING
         record.state = transition(record.state, WorkflowState.FINAL_REVIEW)
         record.state = transition(record.state, WorkflowState.COMPLETED)
         self._save(record)
-        return ProbeReport(parameter.parameter_id, original_value, tested, screenshots, restored)
+        return ProbeReport(
+            parameter.parameter_id, original_value, tested, screenshots, restored, restore_readback,
+            source_unchanged, working_unchanged, original_unchanged,
+        )
 
     async def _read_identity(self, record: ProjectRecord) -> LiveIdentity:
         model_uid = await self.cubism.get_model_uid()
@@ -141,6 +182,29 @@ class SafeParameterProbe:
     async def _ensure_not_stopped(self) -> None:
         if await self.pc_control.is_emergency_stopped():
             raise EmergencyStopError("Windows PC Control MCPは緊急停止中です")
+
+    async def _capture(self, record: ProjectRecord, identity: LiveIdentity) -> None:
+        await self._guard_identity(record, identity)
+        await self.pc_control.focus_cubism()
+        await self._ensure_not_stopped()
+        await self.pc_control.take_screenshot()
+
+    async def _restore_and_readback(
+        self, identity: LiveIdentity, parameter: ParameterRange, original_value: float
+    ) -> bool:
+        for _attempt in range(2):
+            await self.cubism.set_parameter_preview(identity.model_uid, parameter.parameter_id, original_value)
+            await self.cubism.clear_parameter_preview(identity.model_uid)
+            restored_value = await self.cubism.get_parameter_values(identity.model_uid, parameter.parameter_id)
+            if isclose(restored_value, original_value, rel_tol=0.0, abs_tol=1e-6):
+                return True
+        return False
+
+    @staticmethod
+    def _original_hash(record: ProjectRecord) -> str | None:
+        if record.original_model is None or not record.original_model.is_file():
+            return None
+        return sha256_file(record.original_model)
 
     @staticmethod
     def _document_for_model(documents: dict[str, Any], model_uid: str) -> tuple[str, Path]:
@@ -173,19 +237,36 @@ class SafeParameterProbe:
             midpoint = (parameter.default + parameter.maximum) / 2
             if midpoint == parameter.default:
                 midpoint = (parameter.minimum + parameter.default) / 2
-        return [parameter.default, midpoint, parameter.maximum]
+        return [midpoint, parameter.maximum]
 
     @staticmethod
     def _move(record: ProjectRecord, target: WorkflowState) -> None:
         record.state = transition(record.state, target)
 
-    def _record(self, record: ProjectRecord, parameter: ParameterRange | None, original: float | None, tested: list[float], screenshots: int, restored: bool, failure: Exception | None) -> None:
+    def _record(
+        self,
+        record: ProjectRecord,
+        parameter: ParameterRange | None,
+        original: float | None,
+        tested: list[float],
+        screenshots: int,
+        restored: bool,
+        restore_readback: bool,
+        source_unchanged: bool,
+        working_unchanged: bool,
+        original_unchanged: bool | None,
+        failure: Exception | None,
+    ) -> None:
         entry = {
             "parameter_id": parameter.parameter_id if parameter else None,
             "original_value": original,
             "tested_values": tested,
             "screenshots_captured": screenshots,
             "restored": restored,
+            "restore_readback": restore_readback,
+            "source_hash_unchanged": source_unchanged,
+            "working_hash_unchanged": working_unchanged,
+            "original_hash_unchanged": original_unchanged,
             "saved": False,
             "status": "passed" if failure is None else "failed",
         }

@@ -1,4 +1,4 @@
-"""Small, beginner-facing Phase 0B commands with no live MCP side effects."""
+"""Beginner-facing, safety-first commands for Phase 0B.1."""
 
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ from .workspace import ProjectWorkspace, WorkspaceError, sha256_file
 
 
 def status_payload() -> dict[str, str]:
-    """Report the truth about the shipped Phase 0B integration boundary."""
+    """Report only the shipped capability, never an unverified live state."""
     return {
-        "RigPilot": "準備完了（Phase 0B）",
-        "Cubism MCP": "未接続（実機連携は未実装）",
-        "Windows PC Control MCP": "未接続（実機連携は未実装）",
-        "Cubism Model": "未確認",
-        "Parameter Probe": "未実装",
+        "RigPilot": "準備完了（Phase 0B.1）",
+        "Live Verification": "未実施",
+        "Cubism MCP": "設定後に doctor で確認",
+        "Windows PC Control MCP": "設定後に doctor で確認",
+        "Safe Parameter Probe": "実装済み（実機未確認）",
     }
 
 
@@ -68,6 +68,69 @@ async def _live_status(config_path: Path) -> dict[str, str]:
         return result
 
 
+def _project_doctor_payload(project_file: Path | None) -> tuple[dict[str, str], ProjectRecord | None, str | None]:
+    result = {
+        "RigPilot": "OK", "Workspace": "未指定", "Official Sample": "未指定",
+        "Test Model": "未指定", "Working Copy": "未指定",
+    }
+    if project_file is None:
+        return result, None, "公式サンプルを用意した後、rigpilot init で安全な作業コピーを作成してください。"
+    try:
+        record = JsonProjectStore().load(project_file)
+    except (OSError, ValueError, json.JSONDecodeError):
+        result.update({"Workspace": "要確認", "Official Sample": "要確認", "Test Model": "要確認", "Working Copy": "要確認"})
+        return result, None, f"project.jsonを確認してください: {project_file}"
+    source_ok = record.source_model.is_file() and sha256_file(record.source_model) == record.source_sha256
+    working_ok = record.working_model.is_file() and sha256_file(record.working_model) == record.working_sha256
+    original_ok = (
+        record.original_model is not None
+        and record.original_sha256 is not None
+        and record.original_model.is_file()
+        and sha256_file(record.original_model) == record.original_sha256
+    )
+    result["Workspace"] = "OK" if record.root.is_dir() else "要確認"
+    result["Official Sample"] = "OK" if original_ok else "要確認"
+    result["Test Model"] = "OK" if source_ok else "要確認"
+    result["Working Copy"] = "OK" if working_ok else "要確認"
+    if not original_ok:
+        return result, record, "公式サンプル原本を指定して、Phase 0B.1用の新しい作業コピーを作成してください。"
+    if not source_ok:
+        return result, record, "sourceコピーのSHA-256が一致しません。Probeは実行しません。"
+    if not working_ok:
+        return result, record, "workingコピーのSHA-256が一致しません。Probeは実行しません。"
+    return result, record, None
+
+
+def _doctor_payload(project_file: Path | None, config_path: Path) -> tuple[dict[str, str], str | None]:
+    result, _record, next_action = _project_doctor_payload(project_file)
+    if next_action is not None:
+        result.update({"Cubism MCP": "未確認", "PC Control MCP": "未確認", "Safe Probe": "待機中"})
+        return result, next_action
+    try:
+        live = asyncio.run(_live_status(config_path))
+    except ConfigurationError:
+        result.update({"Cubism MCP": "AWAITING USER ACTION（未設定）", "PC Control MCP": "AWAITING USER ACTION（未設定）", "Safe Probe": "待機中"})
+        return result, "rigpilot setup を実行し、Windows PC Control MCPの場所を確認してください。"
+    except (McpClientError, OSError, ValueError):
+        result.update({"Cubism MCP": "AWAITING USER ACTION", "PC Control MCP": "AWAITING USER ACTION", "Safe Probe": "待機中"})
+        return result, "Live2D Cubismを起動してworkingコピーを開き、外部アプリ連携のAllowを承認してください。"
+    result.update(live)
+    if live.get("Emergency Stop") == "ON":
+        result["Safe Probe"] = "停止中"
+        return result, "Windows PC Control MCPが緊急停止中です。原因を確認するまで再開しないでください。"
+    if live.get("Cubism Editor") != "OK":
+        result["Safe Probe"] = "待機中"
+        return result, "Live2D Cubismを起動してください。"
+    if live.get("Allow") != "OK":
+        result["Safe Probe"] = "AWAITING USER ACTION"
+        return result, "Cubism側で外部アプリ連携のAllowを承認してください。Editは不要です。"
+    if live.get("Model") != "OK":
+        result["Safe Probe"] = "待機中"
+        return result, "RigPilotのworkingコピーをCubismで開いてください。"
+    result["Safe Probe"] = "READY" if next_action is None else "待機中"
+    return result, next_action
+
+
 def _print_live_status(config_path: Path, *, as_json: bool) -> None:
     payload = asyncio.run(_live_status(config_path))
     if as_json:
@@ -82,6 +145,74 @@ async def _run_probe(project_file: Path, config_path: Path) -> Any:
     config = McpConfiguration.load(config_path)
     async with open_mcp_session(config.cubism_server()) as cubism_session, open_mcp_session(config.pc_control_server()) as pc_session:
         return await SafeParameterProbe(CubismExternalEditAdapter(cubism_session), WindowsPcControlAdapter(pc_session)).run(record)
+
+
+def _print_doctor(project_file: Path | None, config_path: Path, *, as_json: bool) -> tuple[dict[str, str], str | None]:
+    payload, next_action = _doctor_payload(project_file, config_path)
+    if as_json:
+        print(json.dumps({"checks": payload, "next_action": next_action}, ensure_ascii=False, indent=2))
+    else:
+        for name, value in payload.items():
+            print(f"{name}: {value}")
+        if next_action:
+            print(f"次の操作: {next_action}")
+    return payload, next_action
+
+
+def _discover_pc_control_root() -> Path | None:
+    downloads = Path.home() / "Downloads"
+    if not downloads.is_dir():
+        return None
+    matches = [
+        path for path in downloads.glob("windows-pc-control-mcp*")
+        if (path / ".venv" / "Scripts" / "python.exe").is_file() and (path / "config.json").is_file()
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _setup(config_path: Path, pc_control_root: Path | None) -> int:
+    if config_path.exists():
+        print(f"既存設定を変更しません: {config_path}")
+        return 0
+    root = pc_control_root or _discover_pc_control_root()
+    if root is None:
+        print("Windows PC Control MCPを一意に見つけられませんでした。--pc-control-root で場所を指定してください。")
+        return 3
+    config_path.write_text(
+        json.dumps({"pc_control_mcp_root": str(root.resolve()), "cubism_port": 22033}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"ローカル設定を作成しました: {config_path}")
+    return 0
+
+
+def _verify_live(project_file: Path, config_path: Path) -> int:
+    checks, next_action = _print_doctor(project_file, config_path, as_json=False)
+    if checks.get("Safe Probe") != "READY":
+        print("実機Probeは開始していません。")
+        return 3 if next_action else 2
+    report = asyncio.run(_run_probe(project_file, config_path))
+    record = JsonProjectStore().load(project_file)
+    outcome = "passed" if report.restored and report.restore_readback and report.source_hash_unchanged and report.working_hash_unchanged else "failed"
+    AuditLogger(record.root / "logs" / "audit.jsonl").record(
+        project_id=record.project_id,
+        step="phase_0b1_verify_live",
+        adapter="probe",
+        operation="official_sample_live_verification",
+        outcome=outcome,
+        model_uid=record.model_uid,
+        document_uid=record.document_uid,
+        metadata={
+            "phase": "0B.1", "parameter_id": report.parameter_id,
+            "restore_readback": report.restore_readback,
+            "source_hash_unchanged": report.source_hash_unchanged,
+            "working_hash_unchanged": report.working_hash_unchanged,
+            "saved": False, "capture_count": report.screenshots_captured,
+        },
+    )
+    print(f"実機検証: {'OK' if outcome == 'passed' else '要確認'}")
+    print(f"Parameter: {report.parameter_id}、画面取得: {report.screenshots_captured}回、復元読取り: {'一致' if report.restore_readback else '不一致'}")
+    return 0 if outcome == "passed" else 2
 
 
 def _create_project(*, workspace: Path, project_id: str, model: Path) -> ProjectRecord:
@@ -146,6 +277,19 @@ def build_parser() -> argparse.ArgumentParser:
     probe = subcommands.add_parser("probe", help="作業コピーに対して一時Parameter Probeを実行します。")
     probe.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     probe.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
+
+    setup = subcommands.add_parser("setup", help="既存設定を壊さずにローカルMCP設定を作成します。")
+    setup.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="作成するローカル設定ファイル")
+    setup.add_argument("--pc-control-root", type=Path, help="Windows PC Control MCPのフォルダー")
+
+    doctor = subcommands.add_parser("doctor", help="実機検証の準備状態と次の1操作を表示します。")
+    doctor.add_argument("--project", type=Path, help="project.jsonへのパス")
+    doctor.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
+    doctor.add_argument("--json", action="store_true", help="機械可読なJSONで表示します。")
+
+    verify = subcommands.add_parser("verify-live", help="公式サンプルの安全な実機検証を一括実行します。")
+    verify.add_argument("--project", required=True, type=Path, help="公式サンプルから作ったproject.jsonへのパス")
+    verify.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
     return parser
 
 
@@ -173,6 +317,13 @@ def main(argv: list[str] | None = None) -> int:
             report = asyncio.run(_run_probe(args.project, args.config))
             print(f"Probe完了: {report.parameter_id}、画面取得 {report.screenshots_captured}回、復元: {'OK' if report.restored else '失敗'}")
             return 0
+        if args.command == "setup":
+            return _setup(args.config, args.pc_control_root)
+        if args.command == "doctor":
+            _print_doctor(args.project, args.config, as_json=args.json)
+            return 0
+        if args.command == "verify-live":
+            return _verify_live(args.project, args.config)
     except (OSError, ValueError, WorkspaceError, ConfigurationError, McpClientError, ProbeError) as error:
         print(f"RigPilotを実行できませんでした: {error}")
         print("元のモデルは変更していません。パスとファイル名を確認して、もう一度実行してください。")

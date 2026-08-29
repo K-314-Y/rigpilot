@@ -1,250 +1,176 @@
-# RigPilot 使用書（Phase 0B）
+# RigPilot 使用書（Phase 0B.1）
 
-この文書は、Python、MCP、Git、Live2D Cubismに詳しくない方向けです。
+Python、Git、MCP、Live2D Cubismに詳しくない方向けの手順です。
 
-## 最初に: いまできること
+## RigPilotとは
 
-RigPilotは、AIがLive2D Cubismの制作・確認・修正を支援するためのツールです。
+RigPilotは、AIがLive2D Cubismを安全な範囲で確認することを助けるローカルツールです。Phase 0B.1は完成製品ではありません。公式サンプルモデルの**作業コピー**をCubismで確認し、既存のParameterを一時的に動かし、画面を取得して、開始時の値へ戻せるかを検証します。
 
-Phase 0Bは完成製品ではありません。元の`.cmo3`から安全なコピーを作り、設定済みならCubismへ読み取り接続し、一時的なParameter（モデルを動かすための値）操作・画面取得・元値復元を行えます。実機Cubismでの確認はまだ完了していません。
+この段階で自動制作、保存、書き出し、Parameter・Part・Deformerの構造変更はしません。実機での検証結果は、まだ「未確認」から始まります。
 
-```text
-現在
-元モデルを指定 → 安全なコピーを作成 → 状態を確認
+## 最短で試す
 
-将来
-Cubismを起動 → RigPilotを起動 → モデルを指定 → 一時的に動作確認
-→ 画面を確認 → 元の状態へ復元
-```
+1. Live2D公式サイトで、公式サンプルの利用条件を確認してから、公式サンプルを自分でダウンロードします。RigPilotは規約へ同意したり、サンプルをダウンロードしたりしません。
+2. サンプル内の`.cmo3`の場所をRigPilotへ渡します。自分のLive2Dモデルは不要です。
+3. RigPilotが`source/`と`working/`のコピーを作ります。
+4. Live2D Cubismを起動し、**workingコピーだけ**を開きます。
+5. Cubismの外部アプリ連携でAllowを承認します。
+6. `verify-live`を実行し、最後にCubism上で元の位置へ戻ったことを確認します。
 
-「未接続」「未実装」と表示されるのは、Phase 0Bでは正常です。Cubismを勝手に起動・保存・編集しないための明示です。
+まだ公式サンプルを用意していない場合は、ここで止めてください。規約への同意とダウンロードは利用者自身の操作です。
 
-## 1. 必要なもの
+## 必要なもの
 
-| 必要なもの | Phase 0Bでの用途 | 確認できた条件 |
-| --- | --- | --- |
-| Windows | RigPilotを使うPC | Windowsを基準に案内します。 |
-| Python | RigPilotを起動するため | RigPilotはPython 3.11以上を必要とします。 |
-| RigPilot | 安全なコピーと状態確認 | このリポジトリです。 |
-| Live2D Cubism Editor | 将来の実機確認 | Phase 0Bでは起動・操作しません。 |
-| Windows PC Control MCP | 将来の画面確認・緊急停止 | 既存READMEではWindows 10/11、Python 3.11〜3.13です。 |
-| CubismExternalEditMCP | 将来のCubism連携 | 公式READMEではPython 3.10以上、Cubism Editor 5.4 Alphaが対象です。 |
+- Windows
+- Live2D Cubism Editor（CubismExternalEditMCPが対応する環境）
+- Python 3.11以上（RigPilot）
+- RigPilot
+- Windows PC Control MCP（同MCPのREADMEではWindows 10/11、Python 3.11〜3.13）
+- CubismExternalEditMCP（同MCPの公式READMEではPython 3.10以上、Cubism Editor 5.4 Alphaが対象）
 
-CubismExternalEditMCPのREADMEには、Cubism Editor 5.4 Alphaの有効期限が**2026-09-14**と記載されています。Phase 0Bでは実機連携をまだ検証していないため、手元のCubism 5.3などが対応すると判断しないでください。
+Cubismの対応バージョンは実機で未確認です。手元のCubismが使えるとは、事前に断定しません。
 
-## 2. 初回セットアップ
+## 初回セットアップ
 
-### 2.1 RigPilotを準備する
+### 1. RigPilotを準備する
 
-RigPilotのフォルダーを開き、次を上から順に実行します。一度だけ必要です。
+RigPilotフォルダーで一度だけ実行します。
 
 ```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-```
-
-成功すると、`.venv`という補助フォルダーが作成されます。失敗した場合は、Python 3.11以上が入っているか、RigPilotのフォルダーで実行しているかを確認してください。
-
-次に、RigPilotの現在の状態を表示します。
-
-```powershell
 .\.venv\Scripts\python.exe -m rigpilot status
 ```
 
-`RigPilot: 準備完了（Phase 0B）`と表示されれば成功です。これはローカル基盤の状態です。実機接続は次の設定後に確認します。
+`RigPilot: 準備完了（Phase 0B.1）`と表示されれば成功です。失敗した場合は、Python 3.11以上と、RigPilotフォルダーを開いていることを確認してください。
 
-### 2.2 Windows PC Control MCPを準備する（将来のため）
+### 2. PC Controlの場所を設定する
 
-Phase 0BのRigPilotを使うだけなら、PC Control MCPの準備は不要です。将来の画面確認に備える場合は、PC Control MCPのフォルダーにある`install.cmd`をダブルクリックしてインストールします。
-
-Codexへ登録する場合は、同じフォルダーで次を実行し、Codexを完全に再起動します。
+次のコマンドはWindows PC Control MCPを探し、`rigpilot.local.json`を作成します。既にある設定は上書きしません。
 
 ```powershell
-.\register-codex.ps1
-codex mcp list
+.\.venv\Scripts\python.exe -m rigpilot setup
 ```
 
-成功すると、`codex mcp list`にPC Control MCPが表示されます。表示されない場合は、PC Control MCPのREADMEにある「MCPが表示されない」を確認してください。
-
-### 2.3 CubismExternalEditMCPを準備する（将来のため）
-
-CubismExternalEditMCPは[公式README](https://github.com/nana7chi/CubismExternalEditMCP)の「Quick Start」に従って準備します。MCPは、AIアプリとCubismの間をつなぐ小さな連携プログラムです。
-
-## 3. Cubism側の準備（将来の実機連携時）
-
-実機Probeの前に、CubismExternalEditMCPの公式READMEに従って次を確認します。
-
-1. Cubism Editor 5.4 Alphaを起動し、モデルを開きます。
-2. 「ファイル」→「外部アプリケーション連携の設定」を開きます。
-3. ポートが`22033`であることを確認し、「使用」をオンにします。
-4. 承認画面で連携プログラムを確認します。
-
-`Allow`は、読み取り・一時的な値の設定を許可する権限です。`Edit`は、Parameter、Part、Deformerなどのモデル構造を永続的に変更する権限です。CubismExternalEditMCPの公式READMEは編集機能を含む通常設定としてAllowとEditの両方を案内しています。
-
-Phase 0BのProbeは、モデル構造を編集しません。Allowは必要ですが、Editは`NOT REQUIRED`です。Cubismを再起動すると、外部連携の設定・承認をやり直す必要があります。
-
-## 4. Windows PC Control MCPの準備（将来の画面確認時）
-
-PC Control MCPは、許可されたアプリとフォルダーだけを操作する安全装置です。Phase 0Bで必要なのは、将来使うモデルの場所が`config.json`の`allowed_roots`（開く・許可対象にできる上限フォルダー）に入ることの確認だけです。
-
-- Cubismの実行ファイルが`applications.live2d`に設定されていることを確認します。
-- 作業フォルダーだけを許可対象にします。元のモデルを置いた広いフォルダー全体を無条件に許可しないでください。
-- Phase 0Bでは編集許可、Cubism Trusted Mode、Persistent Trusted Authorizationを有効にする必要はありません。
-
-PC Control MCPは、スクリーンショットを通常はメモリー上で返します。ただし、MCPクライアント側が会話履歴やキャッシュとして画像を保持する可能性があります。
-
-## 5. RigPilotの起動
-
-Phase 0Bで使えるコマンドは次のとおりです。Cubismを起動・保存・編集するコマンドはありません。
+見つからないと表示されたときだけ、そのMCPフォルダーを指定します。
 
 ```powershell
-# RigPilot自体の状態を確認する
-.\.venv\Scripts\python.exe -m rigpilot status
-
-# 元の.cmo3を読み取り、RigPilot用の安全なコピーを作る
-.\.venv\Scripts\python.exe -m rigpilot init --workspace .\projects --project-id mia-check --model "C:\モデルの場所\model.cmo3"
-
-# 作成済みコピーの状態を確認する
-.\.venv\Scripts\python.exe -m rigpilot project-status --project .\projects\mia-check\project.json
-
-# 実MCPへの読み取り接続を確認する（rigpilot.local.jsonが必要）
-.\.venv\Scripts\python.exe -m rigpilot status --live
-
-# Cubismでworkingコピーを開いてから、一時Probeを実行する
-.\.venv\Scripts\python.exe -m rigpilot probe --project .\projects\mia-check\project.json
+.\.venv\Scripts\python.exe -m rigpilot setup --pc-control-root "C:\PC Control MCPのフォルダー"
 ```
 
-2つ目のコマンドでは、`C:\モデルの場所\model.cmo3`を実際の元モデルの場所に置き換えます。空白を含むパスは、必ず引用符で囲みます。
+成功すると設定ファイルの場所が表示されます。失敗してもモデルには何も行いません。
 
-成功すると、`projects\mia-check`の中に次が作成されます。
+### 3. 公式サンプルから安全なコピーを作る
 
-```text
-source/       元モデルを読み取って作った保護用コピー
-working/      将来RigPilotが作業するコピー
-checkpoints/  将来の復元地点
-exports/      将来の書き出し先
-logs/         操作記録
-project.json  プロジェクトの状態
+利用条件を確認済みの公式サンプルにある`.cmo3`を指定します。次の`--model`だけ実際のファイルに置き換えます。
+
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot init --workspace .\projects --project-id official-sample-check --model "C:\公式サンプルの場所\model.cmo3"
 ```
 
-## 6. 接続確認
+成功すると、`projects\official-sample-check\source\`と`working\`に別コピーが作られます。元のダウンロードファイルは直接操作しません。
 
-実MCPの設定前は、次の表示が正しい状態です。
+## Cubism側の準備
 
-```text
-RigPilot: 準備完了（Phase 0B）
-Cubism MCP: 未接続（実機連携は未実装）
-Windows PC Control MCP: 未接続（実機連携は未実装）
-Cubism Model: 未確認
-Parameter Probe: 未実装
+1. Live2D Cubismを起動します。
+2. 上で作成された`working\`内の`.cmo3`だけを開きます。`source\`や公式ダウンロード原本は開きません。
+3. CubismExternalEditMCPの公式手順に従い、「外部アプリケーション連携」を有効にします。
+4. Cubismが表示するAllowを承認します。
+
+Allowは接続と一時Parameter操作の許可です。Phase 0B.1ではEdit（モデル構造を永続変更する許可）は要求しません。Cubismを再起動した場合、連携設定とAllowを再確認してください。
+
+## Windows PC Control MCPの準備
+
+Windows PC Control MCPのREADMEどおりに準備します。RigPilotで必要なのは状態確認、Cubismウィンドウの前面化、スクリーンショットだけです。
+
+- `config.json`の`applications.live2d`が実際のCubismを指すことを確認します。
+- RigPilotの`working`フォルダーを`allowed_roots`（許可対象の上限フォルダー）に含めます。
+- 既存の安全機構を無効にしないでください。
+
+## 接続確認（Doctor）
+
+作業コピーを開いたら、次を実行します。
+
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot doctor --project .\projects\official-sample-check\project.json
 ```
 
-実機接続を確認するには、リポジトリの`rigpilot.local.example.json`を`rigpilot.local.json`へコピーし、`pc_control_mcp_root`を実際のWindows PC Control MCPフォルダーへ書き換えます。その後、`status --live`を実行します。`OK`／`要確認`は実機の状態を示します。
+`OK`はその項目を確認できた意味です。`AWAITING USER ACTION`、`待機中`、`要確認`は失敗扱いではなく、表示された「次の操作」を一つだけ行う状態です。Cubismが起動していない、workingモデルが開かれていない、Allowが未承認の場合に、存在しない`OK`は表示しません。
 
-## 7. Phase 0Bでの安全な確認
+## Phase 0B.1の実行
 
-`probe`は、Cubismで**RigPilotのworkingコピー**を開いた状態で実行します。Parameter ID、model UID、document UIDを手入力する必要はありません。RigPilotが既存Parameterを優先順で選び、`default → midpoint → maximum → 元値`を実行します。
+Doctorが`Safe Probe: READY`になったら、一括検証を実行します。
 
-Probe中、PC Control MCPがCubismを前面化するときは、Windows側の確認が表示される場合があります。許可しない場合、Probeは中断し、元値復元を試みます。
-
-Probeは次の順序で動きます。画像本体はRigPilotの監査ログへ保存しません。
-
-```text
-対象モデル確認
-↓
-Parameterを選択
-↓
-一時的に動かす
-↓
-スクリーンショットで確認
-↓
-Neutral（通常の位置）へ戻す
-↓
-保存しないで終了
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot verify-live --project .\projects\official-sample-check\project.json
 ```
 
-実装後は、Cubism上で「顔などが一時的に動き、数秒後に元の位置へ戻る」ことを確認します。
+RigPilotは、model UID、document UID、workingパス、編集モード、既存Parameter、Part構造を確認してから開始します。`ParamAngleX`、`ParamEyeLOpen`、`ParamMouthOpenY`を優先し、なければ安全な既存Parameterを選びます。開始時の値、中央付近、最大値、開始時の値の順に一時操作します。
 
-## 8. 正常終了時に確認すること
+画面はBaseline、中央付近、最大値、復元後に取得します。画像本体はRigPilotの監査ログに保存しません。復元後は値を読み直し、開始時の値と一致するかを確認します。不一致なら1回だけ再試行し、改善しなければ停止します。
 
-Phase 0Bでコピー作成が成功したら、次を確認します。
+## 正常終了時に確認すること
 
-- 元の`.cmo3`が元の場所に残っている
-- `project-status`の`元データコピー: OK`が表示される
-- `projects\<プロジェクト名>\logs\audit.jsonl`が作成されている
-- 元の`.cmo3`をRigPilotが保存した形跡がない
+- Cubism上のモデルが開始時の位置へ戻っている
+- `source`と`working`のSHA-256が処理前後で不変
+- `.cmo3`を保存していない
+- `logs\audit.jsonl`に結果がある（画像・認証情報は含めない）
 - エラー表示がない
 
-まだ実機Probeをしていないため、「モデルがNeutralへ戻った」「スクリーンショットがある」はPhase 0Bの正常終了条件ではありません。
+実機で未実施の項目は、成功したように扱いません。
 
-## 9. エラー時
+## エラーと対処
 
-エラーが出た場合、まず元のモデルを閉じたり保存し直したりせず、表示と次の表を確認してください。
-
-| 表示・状況 | まず確認すること |
+| 表示・状況 | 確認すること |
 | --- | --- |
-| `RigPilotを実行できませんでした` | コマンドをRigPilotフォルダーで実行しているか、`.cmo3`のパスが正しいかを確認します。元のモデルは変更されていません。 |
-| Cubismに接続できない | Cubismを起動し、workingコピーを開き、外部アプリ連携をオンにしてAllowを確認後、`status --live`を再実行します。 |
-| Windows PC Control MCPに接続できない | `rigpilot.local.json`のフォルダーを確認し、PC Control MCPを再起動してから`status --live`を再実行します。 |
-| モデルが見つからない | `--model`に指定した場所と拡張子`.cmo3`を確認します。 |
-| model UIDが変わった | UIDはCubismで開いているモデルを識別する番号です。Phase 0Bではまだ取得しません。将来この表示が出たら、別のモデルが開かれている可能性があるため処理を止めます。 |
-| Screenshot取得失敗 | Probeは元値復元を試みます。連続実行せず、PC Control MCPの状態とCubismウィンドウを確認します。 |
-| Neutralへ戻せなかった | Probeは`needs_human_review`として失敗します。その場で保存せず、緊急停止を使い、Cubism上の値を確認します。 |
-| emergency stopが作動した | 次章に従い、原因を確認するまで再開しません。 |
+| Cubismに接続できない | Cubismを起動し、workingコピーを開き、外部アプリ連携とAllowを確認します。 |
+| PC Control MCPに接続できない | `rigpilot setup`とPC Control MCPのREADMEを確認します。 |
+| モデルが見つからない | `--model`で指定した公式サンプルの`.cmo3`を確認します。 |
+| model UIDが変わった | 別のモデルへ切り替わった可能性があります。保存せず、workingコピーだけが開かれているか確認します。 |
+| Screenshot取得失敗 | Probeは復元を試みます。連続実行せず、CubismウィンドウとPC Controlの状態を確認します。 |
+| Restore Readbackが不一致 | 1回の再試行後に停止します。Cubismで開始時の値を確認し、保存せずに状況を確認してください。 |
+| Emergency Stop | 自動再開しません。次章を確認します。 |
 
-## 10. 緊急停止
+## 緊急停止
 
-何かおかしいと感じたら、Windows PC Control MCPでは次のいずれかで停止できます。
+異常を感じたら、Windows PC Control MCPの実装済みの方法で止めます。
 
 1. **Ctrl + Alt + Shift + F12**を押す。
-2. デスクトップの「PC MCP 緊急停止」をダブルクリックする（PC Control MCP側で作成済みの場合）。
-3. PC Control MCPのフォルダーにある`emergency-stop.cmd`を実行する。
-4. マウスを画面左上へ移動する。
+2. 作成済みならデスクトップの「PC MCP 緊急停止」をダブルクリックする。
+3. Windows PC Control MCPフォルダーの`emergency-stop.cmd`を実行する。
+4. マウスを画面左上へ移動してPyAutoGUIのフェイルセーフを使う。
 
-停止すると、PC Control MCPの操作許可と編集フォルダー許可が取り消され、`EMERGENCY_STOP`状態が保存されます。MCPを再起動しても自動では解除されません。原因が分かるまで、`resume_control`による再開を急がないでください。
+緊急停止は`EMERGENCY_STOP`として保存され、MCPを再起動しても自動解除されません。原因を確認するまで`resume_control`で再開しないでください。
 
-RigPilot Phase 0B自身はPC操作をまだ開始しないため、ここにある停止方法は将来PC Control MCPと連携する段階のための案内です。
+## 安全について
 
-## 11. 安全について
+Phase 0B.1では、元の`.cmo3`を変更・保存せず、モデルを保存せず、Parameter構造、Part、Deformerを変更せず、削除・exportもしません。一時的なParameter値だけを使用し、対象はworkingコピーに限定します。それでもソフトウェアなので絶対の保証はできません。大切なデータは別途バックアップしてください。
 
-Phase 0Bでは、次を行いません。
+## よくある質問
 
-- 元の`.cmo3`を変更しない
-- 元のモデルを保存しない
-- Parameter構造を変更しない
-- Partを変更しない
-- Deformerを変更しない
-- ファイルを削除しない
-- exportしない
-- Parameter、Part、Deformerの永続編集をしない
+### 元のLive2Dモデルは壊れませんか？
 
-`init`は、元モデルを読み取ってRigPilotフォルダー内へコピーするだけです。ソフトウェアである以上、絶対に問題が起きないとは約束できません。大切なモデルは、別の場所へバックアップしてから使ってください。
+公式サンプル原本、RigPilotの`source`、`working`を分離し、SHA-256で確認します。保存や構造編集はしませんが、バックアップは推奨します。
 
-## 12. よくある質問
+### Live2Dを知らなくても使えますか？
 
-### Q. 元のLive2Dモデルは壊れませんか？
+最終製品ではそれを目標にしています。Phase 0B.1ではCubismの起動、workingコピーを開くこと、Allowの承認、最後の目視確認は利用者が行います。
 
-Phase 0Bの`init`は元ファイルを読み取り、別コピーを作ります。Probeはworkingコピーに一時値を送りますが、永続保存や構造編集は行いません。ただし、利用前にバックアップを作ることをおすすめします。
+### AIが勝手に保存しますか？
 
-### Q. Live2Dを知らなくても使えますか？
+いいえ。Phase 0B.1には保存Toolを使う処理はありません。
 
-最終製品では、Live2Dの専門知識がなくても使えることを目標にしています。Phase 0Bはそのための安全な基礎段階で、まだ自動制作機能はありません。
+### AIがPC全体を操作できますか？
 
-### Q. AIが勝手に保存しますか？
+いいえ。Windows PC Control MCPの許可範囲に限られます。RigPilotは任意のShell実行機能を追加していません。
 
-Phase 0BのRigPilotは保存しません。Probeは一時Parameter値を送りますが、終了時に元値復元と一時値クリアを試みます。
+### インターネットへモデル画像を送りますか？
 
-### Q. AIがPC全体を操作できますか？
+RigPilotには画像を外部送信する機能はありません。PC Control MCPの画像は通常メモリー上で返りますが、接続先のAIクライアントの履歴・キャッシュの扱いは別途確認してください。
 
-Windows PC Control MCPは許可されたアプリとフォルダーに限定する設計で、任意のPowerShell、CMD、Pythonコードを実行する機能は追加していません。Phase 0BのRigPilotは、画面確認に必要な最小Toolだけを使用します。
+## 将来の完成版（予定）
 
-### Q. インターネットへモデル画像を送りますか？
-
-Phase 0BのRigPilotには、モデル画像をインターネットへ送る機能は実装していません。将来PC Control MCPで画面を取得するときも、MCP側は通常メモリー上で画像を返しますが、接続するAIクライアントが会話履歴やキャッシュとして保持する可能性はあります。
-
-## 13. 将来の完成版の使い方
-
-これは予定です。Phase 0Bで実装済みの機能ではありません。
+これは未実装です。
 
 ```text
 1. キャラクター素材を指定
@@ -252,26 +178,16 @@ Phase 0BのRigPilotには、モデル画像をインターネットへ送る機�
 3. RigPilotが自動制作
 4. 内部で動作検査
 5. モーションを最終確認
-6. 問題があれば普通の日本語で修正指示
+6. 普通の日本語で修正指示
 7. 完成
 ```
 
-## 14. 文書の役割
+## 文書の役割と手動操作
 
-- `README.md` → プロジェクト概要
-- `SETUP.md` → 開発環境セットアップ
-- `USER_GUIDE_JA.md` → 一般利用者向け使用書
-- `IMPLEMENTATION_STATUS.md` → 現在の実装状況
-- `docs/` → 詳細設計（将来追加）
+- `README.md`：プロジェクト概要
+- `SETUP.md`：開発環境セットアップ
+- `USER_GUIDE_JA.md`：一般利用者向け使用書
+- `IMPLEMENTATION_STATUS.md`：現在の実装状況
+- `docs/`：詳細設計
 
-## 15. 手動で必要な操作
-
-Phase 0Bで利用者が手動で行うことは次のとおりです。
-
-1. PythonとRigPilotを一度だけ準備する。
-2. Cubismを起動し、RigPilotのworkingコピーを開き、Allowを承認する。
-3. PC Control MCPの設定を確認し、必要時のPC側確認を承認する。
-4. `status --live`と`probe`を実行する。
-5. 大切なモデルのバックアップを保管する。
-
-将来削減する予定の手動操作は、MCPの登録、Cubism起動、モデルを開く、外部連携の許可、Parameter選択、画面確認です。各段階で安全に自動化できることを確認してから減らします。
+現時点で利用者が行う操作は、公式規約の確認・サンプルのダウンロード、Cubismの起動、workingコピーを開く、Allowと必要時のPC確認、最後の目視確認です。将来は安全を確認しながら、サンプル探索、設定作成、作業コピー作成、診断、Parameter選択、検証実行をさらに減らします。
