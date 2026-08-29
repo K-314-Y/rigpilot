@@ -74,12 +74,10 @@ class CubismExternalEditAdapter:
         return await self.client.call_json("cubism_get_part_structure", {"model_uid": model_uid})
 
     async def set_parameter_preview(self, model_uid: str, parameter_id: str, value: float) -> None:
-        result = await self.client.call_json(
+        await self.client.call_json(
             "cubism_set_parameter_values",
             {"model_uid": model_uid, "parameters": [{"Id": parameter_id, "Value": value}]},
         )
-        if result.get("Result") is not True:
-            raise LiveAdapterError("Cubismが一時Parameter値を受け付けませんでした")
 
     async def clear_parameter_preview(self, model_uid: str) -> None:
         await self.client.call_json("cubism_clear_parameter_values", {"model_uid": model_uid})
