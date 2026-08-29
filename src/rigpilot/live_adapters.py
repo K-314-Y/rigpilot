@@ -41,12 +41,17 @@ class CubismExternalEditAdapter:
         "cubism_get_parameter_values", "cubism_get_part_structure",
         "cubism_set_parameter_values",
     }
+    _EDIT_TOOLS: ClassVar[set[str]] = {"cubism_get_object", "cubism_edit_part"}
 
     def __init__(self, client: McpToolSession) -> None:
         self.client = client
 
     async def verify_schema(self) -> None:
         await self.client.require_tools(self._TOOLS)
+
+    async def verify_edit_schema(self) -> None:
+        """Verify only the two additional tools permitted for Phase 2A."""
+        await self.client.require_tools(self._TOOLS | self._EDIT_TOOLS)
 
     async def get_status(self) -> dict[str, Any]:
         return await self.client.call_json("cubism_status")
@@ -88,6 +93,26 @@ class CubismExternalEditAdapter:
 
     async def get_part_structure(self, model_uid: str) -> dict[str, Any]:
         return await self.client.call_json("cubism_get_part_structure", {"model_uid": model_uid})
+
+    async def get_object(self, model_uid: str, object_id: str) -> dict[str, Any]:
+        result = await self.client.call_json("cubism_get_object", {"model_uid": model_uid, "id": object_id})
+        if result.get("Result") is not True or not isinstance(result.get("Data"), dict):
+            raise LiveAdapterError(f"CubismのObjectを取得できません: {object_id}")
+        return result
+
+    async def edit_part_label_color(self, model_uid: str, part_id: str, label_color_type: str) -> dict[str, Any]:
+        """The sole durable-edit request allowed in Phase 2A.
+
+        This deliberately exposes no generic edit API, batch edit, save, or
+        structural property.  The transaction engine verifies the resulting
+        object separately and always requests the original value on rollback.
+        """
+        if label_color_type not in {"undefined", "custom", "red", "orange", "yellow", "green", "blue", "purple", "gray"}:
+            raise LiveAdapterError("Phase 2Aでは許可されていないLabelColorです")
+        return await self.client.call_json(
+            "cubism_edit_part",
+            {"model_uid": model_uid, "id": part_id, "label_color_type": label_color_type},
+        )
 
     async def set_parameter_preview(self, model_uid: str, parameter_id: str, value: float) -> None:
         await self.set_parameter_previews(model_uid, {parameter_id: value})

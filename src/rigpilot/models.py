@@ -24,6 +24,7 @@ class WorkflowState(StrEnum):
     GENERATING = "generating"
     VALIDATING = "validating"
     REPAIRING = "repairing"
+    ROLLING_BACK = "rolling_back"
     FINAL_REVIEW = "final_review"
     COMPLETED = "completed"
     PAUSED = "paused"

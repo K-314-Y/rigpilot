@@ -1,6 +1,6 @@
 # 実装状況
 
-最終確認日: 2026-08-29
+最終確認日: 2026-08-30
 
 ## Phase 0A: 基盤
 
@@ -62,18 +62,31 @@
 
 2026-08-29に公式サンプルのworkingコピーで実行しました。顔（左右・上下・傾き）、まばたき、視線（左右・上下）、口（開閉・表情）、体（左右・上下）の10カテゴリがPASS、`ParamBodyAngleZ`がない体の傾きはSKIPPEDでした。30回の画面取得、全対象Parameterの復元読取り一致、3ファイルのSHA-256不変、保存・書き出し・構造編集・削除未実行、利用者の中立状態目視確認を記録しました。詳細はプロジェクトの`reports/phase-1-validation-20260829T074217Z.json`にあります。
 
+## Phase 2A: Safe Edit Transaction Foundation
+
+コード実装済み・Fake MCP確認済み・公式サンプルでの実機Stage 1 dry-run確認済みです。Editを伴うStage 2以降はまだ実施していません。
+
+- `rigpilot edit-test --dry-run`は、実編集をせずに編集可能なPart、現在の`LabelColorType`、一時値、rollback値を確認する
+- `rigpilot edit-test`だけがEdit承認を確認する。許可する実編集はPartの`label_color_type`のみで、`cubism_edit_batch`、Parameter Key、ArtMesh、Deformer、Save、Exportは呼ばない
+- 編集前にIdentity、Modeling mode、3ファイルのSHA-256、Allow、Edit、Emergency Stop、Part ObjectのSnapshotを確認する
+- 一時編集のreadback、元値へのrollback readback、Object Before/Afterのcanonical比較、3ファイルのSHA-256不変を必須とする
+- 通常エラーでは条件付き1回だけrollbackを再試行する。Emergency Stop後はrollbackを含む追加編集を送らず、`emergency_stopped`へ停止する
+- rollback成功後だけ既存Phase 1 Validation Engineを1回実行する
+
+2026-08-30に公式サンプルのworkingコピーで`edit-test --dry-run`を実行しました。`Part01HandR`の`LabelColorType`が`undefined`であることを読み取り、一時値`blue`、rollback値`undefined`の取引計画を生成しました。Edit Tool、Save、Exportは呼び出していません。
+
 ## 検証状態
 
-- IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、setup/doctor/verify-live/validate CLI、使用書
-- MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗、復元読取り不一致の1回再試行、source/working SHA-256変化、スクリーンショット待機・一時休止・1回再試行、Phase 1のPlan生成、SKIPPED、複数Parameter復元、dry-run、JSONレポート
+- IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、setup/doctor/verify-live/validate/edit-test CLI、使用書
+- MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗、復元読取り不一致の1回再試行、source/working SHA-256変化、スクリーンショット待機・一時休止・1回再試行、Phase 1のPlan生成、SKIPPED、複数Parameter復元、dry-run、JSONレポート、Phase 2AのEdit未承認・dry-run・一時readback・rollback・条件付きretry・Emergency Stop・hash変化・最終検査再利用
 - WINDOWS VERIFIED: Windows PC Control MCPの接続、Cubismウィンドウ検出、クールダウン適用下の連続スクリーンショット4回、緊急停止OFF
 - CUBISM VERIFIED: Allow承認、workingコピーの識別照合、`ParamAngleX`の一時操作・復元・読取り一致、Phase 1の10カテゴリPASS・30回の画面取得、利用者の中立状態目視確認
 - VERIFIED IN THIS RUN: 公式原本、source、workingのSHA-256不変。保存、書き出し、構造編集、削除は実行していない
-- UNVERIFIED: 他のCubismバージョン、別モデル、別Windows環境での再現性
+- UNVERIFIED: Phase 2AのEditを伴う実機round-tripと最終Phase 1検査、他のCubismバージョン、別モデル、別Windows環境での再現性
 
 ## 未実装
 
-- Cubismの起動、保存、書き出し、モデル構造の編集
+- Cubismの起動、保存、書き出し、自動修正、Parameter Key・ArtMesh・Deformer・Part構造の編集
 - GUI、最終確認画面、AIによる自動修正
 
 Probeは一時値をCubismへ送りますが、保存・構造編集は行いません。今回の実機確認は公式サンプル1件に限られます。

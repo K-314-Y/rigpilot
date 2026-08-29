@@ -10,6 +10,7 @@ from typing import Any
 
 from .audit import AuditLogger
 from .config import ConfigurationError, McpConfiguration
+from .edit_transaction import SafeEditTransaction
 from .live_adapters import CubismExternalEditAdapter, WindowsPcControlAdapter
 from .mcp_client import McpClientError, open_mcp_session
 from .models import ProjectRecord, WorkflowState
@@ -159,6 +160,14 @@ async def _run_validation(project_file: Path, config_path: Path, *, dry_run: boo
         return await (validator.dry_run(record) if dry_run else validator.run(record))
 
 
+async def _run_edit_test(project_file: Path, config_path: Path, *, dry_run: bool) -> Any:
+    record = JsonProjectStore().load(project_file)
+    config = McpConfiguration.load(config_path)
+    async with open_mcp_session(config.cubism_server()) as cubism_session, open_mcp_session(config.pc_control_server()) as pc_session:
+        transaction = SafeEditTransaction(CubismExternalEditAdapter(cubism_session), WindowsPcControlAdapter(pc_session))
+        return await (transaction.dry_run(record) if dry_run else transaction.run(record))
+
+
 async def _open_working_model(project_file: Path, config_path: Path) -> None:
     record = JsonProjectStore().load(project_file)
     working = _working_model_for_open(record)
@@ -269,6 +278,33 @@ def _validate(project_file: Path, config_path: Path, *, dry_run: bool, as_json: 
     return 0 if dry_run or (report.all_restored and report.restore_readback and report.source_hash_unchanged and report.working_hash_unchanged) else 2
 
 
+def _edit_test(project_file: Path, config_path: Path, *, dry_run: bool, as_json: bool) -> int:
+    report = asyncio.run(_run_edit_test(project_file, config_path, dry_run=dry_run))
+    payload = report.to_dict()
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif dry_run:
+        print("編集テスト対象: Part メタデータ")
+        print(f"対象Part: {report.plan.target_id}")
+        print(f"変更予定: {report.plan.property} ({report.plan.before} → {report.plan.temporary})")
+        print("モデルの見た目: 変更しません")
+        print("Save: しません")
+        print("終了時: 元値へ戻します")
+    else:
+        print("RigPilot Phase 2A 編集テスト")
+        print(f"対象Part: {report.plan.target_id} / {report.plan.property}")
+        print(f"一時編集読取り: {'MATCH' if report.edit.matched else 'MISMATCH'}")
+        print(f"Rollback読取り: {'MATCH' if report.rollback.matched else 'MISMATCH'}")
+        print(f"Object Before/After: {'IDENTICAL' if report.object_before_after_identical else 'DIFFERENT'}")
+        print(f"最終Phase 1検査: {'PASS' if report.final_validation else 'FAIL'}")
+        print(f"取引レポート: {report.report_path}")
+    return 0 if dry_run or (
+        report.edit.matched and report.rollback.matched and report.object_before_after_identical
+        and report.final_validation is not None and not report.emergency_stop
+        and report.source_hash_unchanged and report.working_hash_unchanged and report.original_hash_unchanged is not False
+    ) else 2
+
+
 def _resume_after_review(project_file: Path) -> None:
     record = JsonProjectStore().load(project_file)
     if record.state not in {WorkflowState.FAILED, WorkflowState.NEEDS_HUMAN_REVIEW}:
@@ -377,6 +413,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--dry-run", action="store_true", help="Parameterを変更せず、検査予定だけを表示します。")
     validate.add_argument("--json", action="store_true", help="機械可読なJSONで表示します。")
 
+    edit_test = subcommands.add_parser("edit-test", help="Phase 2Aの可逆なPartメタデータ編集を検査します。")
+    edit_test.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
+    edit_test.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
+    edit_test.add_argument("--dry-run", action="store_true", help="編集せず、対象と取引計画だけを確認します。")
+    edit_test.add_argument("--json", action="store_true", help="機械可読なJSONで表示します。")
+
     open_working = subcommands.add_parser("open-working", help="安全なworkingコピーを既定アプリで開きます。")
     open_working.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     open_working.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
@@ -419,6 +461,8 @@ def main(argv: list[str] | None = None) -> int:
             return _verify_live(args.project, args.config)
         if args.command == "validate":
             return _validate(args.project, args.config, dry_run=args.dry_run, as_json=args.json)
+        if args.command == "edit-test":
+            return _edit_test(args.project, args.config, dry_run=args.dry_run, as_json=args.json)
         if args.command == "open-working":
             asyncio.run(_open_working_model(args.project, args.config))
             print("workingコピーを開く要求を送信しました。Windowsの確認が出た場合は内容を確認して承認してください。")

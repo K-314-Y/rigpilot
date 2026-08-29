@@ -140,10 +140,12 @@ class AutomaticModelValidator:
         pc_control: WindowsPcControlAdapter,
         *,
         focus_settle_seconds: float = 2.0,
+        restore_on_emergency: bool = True,
     ) -> None:
         self.cubism = cubism
         self.pc_control = pc_control
         self.focus_settle_seconds = focus_settle_seconds
+        self.restore_on_emergency = restore_on_emergency
 
     async def dry_run(self, record: ProjectRecord) -> ValidationReport:
         state_before = record.state
@@ -201,7 +203,7 @@ class AutomaticModelValidator:
             failure = error
         finally:
             failure_state = record.state
-            if identity is not None and originals:
+            if identity is not None and originals and (self.restore_on_emergency or not isinstance(failure, EmergencyStopError)):
                 try:
                     record.state = WorkflowState.RESTORING
                     restored, restore_attempts = await self._restore_all(identity, originals)

@@ -1,12 +1,12 @@
-# RigPilot 使用書（Phase 1）
+# RigPilot 使用書（Phase 2A）
 
 Python、Git、MCP、Live2D Cubismに詳しくない方向けの手順です。
 
 ## RigPilotとは
 
-RigPilotは、AIがLive2D Cubismを安全な範囲で確認することを助けるローカルツールです。Phase 1は完成製品ではありません。公式サンプルモデルの**作業コピー**をCubismで確認し、既存のParameterを一時的に動かして基本動作を検査し、開始時の値へ戻せるかを確認します。
+RigPilotは、AIがLive2D Cubismを安全な範囲で確認することを助けるローカルツールです。完成製品ではありません。公式サンプルモデルの**作業コピー**をCubismで確認し、既存のParameterを一時的に動かして基本動作を検査し、開始時の値へ戻せるかを確認します。Phase 2Aでは、表示に影響しないPartのラベル色を一時的に試し、元へ戻せるかも確認できます。
 
-この段階で自動制作、保存、書き出し、Parameter・Part・Deformerの構造変更はしません。公式サンプルのworkingコピーでは実機確認済みですが、別のモデルや別の環境で同じ結果になることを事前に保証するものではありません。
+この段階で自動制作、保存、書き出し、Parameter・Part・Deformerの構造変更はしません。Phase 2Aのラベル色確認は自動修正ではなく、Partの名前・形・描画順・見た目には影響しないメタデータだけを対象にします。公式サンプルのworkingコピーではPhase 1を実機確認済みですが、別のモデルや別の環境で同じ結果になることを事前に保証するものではありません。
 
 ## 最短で試す
 
@@ -138,6 +138,30 @@ RigPilotは顔、まばたき、視線、口、体について、モデルに実
 
 結果では、`PASS`は基本動作を確認できた、`WARNING`は確認候補、`SKIPPED`はその項目がない、`FAIL`は安全に停止した、という意味です。Phase 1は自動修正を行いません。
 
+## Phase 2Aの編集取引テスト
+
+Phase 2Aは「自動修正」ではありません。CubismのEdit権限があるときだけ、Part（モデルの整理単位）の`LabelColorType`という画面の描画に影響しないラベル色を、一度だけ変え、読取り、元の値へ戻せるかを確認します。Save、Export、Parameter Key、ArtMesh、Deformer、Partの構造は変更しません。
+
+最初に、編集を一切行わないdry-runを実行します。Cubismを操作する必要はありません。
+
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot edit-test --project .\projects\official-sample-check\project.json --dry-run
+```
+
+成功すると、対象Part、`LabelColorType`の現在値、予定する一時値、rollback値が表示されます。`Save: しません`と表示され、`cubism_edit_part`は呼ばれません。Editが未承認なら、CubismでAllowとEditを確認してください。`validate`や`verify-live`にはEditは必要ありません。
+
+実機の編集取引は、dry-runの内容を確認した後にだけ実行します。**開始から結果表示までCubismを操作しないでください。**
+
+```powershell
+.\.venv\Scripts\python.exe -m rigpilot edit-test --project .\projects\official-sample-check\project.json
+```
+
+RigPilotは、一時編集のreadback、rollbackのreadback、対象Partの開始前・終了後の一致、3つの`.cmo3`のSHA-256、最後のPhase 1検査を確認します。詳細は`reports`フォルダーの`phase-2a-edit-transaction-*.json`に記録されます。
+
+### Phase 2Aの緊急停止
+
+異常を感じたら、次章の緊急停止を使ってください。Phase 2Aでは緊急停止が作動した後、**rollbackも含めてCubismへの追加操作を自動で行いません**。Cubism上に未保存のラベル色変更が残っている可能性があるため、保存せずにCubismを閉じてください。自動再開もしません。
+
 ## 正常終了時に確認すること
 
 - Cubism上のモデルが開始時の位置へ戻っている
@@ -146,7 +170,7 @@ RigPilotは顔、まばたき、視線、口、体について、モデルに実
 - `logs\audit.jsonl`に結果がある（画像・認証情報は含めない）
 - エラー表示がない
 
-この公式サンプルではPhase 1の9カテゴリを実機確認済みです。別モデル・別環境の項目は、成功したように扱いません。
+この公式サンプルではPhase 1の10カテゴリを実機確認済みです。別モデル・別環境の項目は、成功したように扱いません。
 
 ## エラーと対処
 
@@ -158,7 +182,9 @@ RigPilotは顔、まばたき、視線、口、体について、モデルに実
 | model UIDが変わった | 別のモデルへ切り替わった可能性があります。保存せず、workingコピーだけが開かれているか確認します。 |
 | Screenshot取得失敗 | Probeは復元を試みます。連続実行せず、CubismウィンドウとPC Controlの状態を確認します。 |
 | Restore Readbackが不一致 | 1回の再試行後に停止します。Cubismで開始時の値を確認し、保存せずに状況を確認してください。 |
-| モデル検査が途中で停止した | RigPilotは開始時の値への復元を優先します。結果表示後にモデルが開始時の状態へ戻っているか確認し、`reports`のレポートを確認してください。 |
+| モデル検査が途中で停止した | Phase 1では開始時の値への復元を優先します。結果表示後にモデルが開始時の状態へ戻っているか確認し、`reports`のレポートを確認してください。 |
+| Phase 2AのEdit承認エラー | Cubismで外部アプリ連携のAllowとEditを確認します。`validate`ではEditは不要です。 |
+| Phase 2Aのrollback不一致 | 追加の編集を行わず、保存せずにCubismを閉じてください。`reports`の取引レポートを確認し、RigPilotに相談してください。 |
 | `failed` / `needs_human_review` | RigPilotが停止した理由と、開始時の値・SHA-256を確認します。確認後の再開はRigPilotに依頼してください。 |
 | Emergency Stop | 自動再開しません。次章を確認します。 |
 
@@ -175,7 +201,7 @@ RigPilotは顔、まばたき、視線、口、体について、モデルに実
 
 ## 安全について
 
-Phase 1では、元の`.cmo3`を変更・保存せず、モデルを保存せず、Parameter構造、Part、Deformerを変更せず、削除・exportもしません。一時的なParameter値だけを使用し、対象はworkingコピーに限定します。それでもソフトウェアなので絶対の保証はできません。大切なデータは別途バックアップしてください。
+Phase 1では、元の`.cmo3`を変更・保存せず、モデルを保存せず、Parameter構造、Part、Deformerを変更せず、削除・exportもしません。一時的なParameter値だけを使用し、対象はworkingコピーに限定します。Phase 2AでもSave・Export・構造変更は行わず、Partの表示に影響しないラベル色だけを一時編集して必ず読取り・rollback確認を行います。それでもソフトウェアなので絶対の保証はできません。大切なデータは別途バックアップしてください。
 
 ## よくある質問
 
@@ -189,7 +215,7 @@ Phase 1では、元の`.cmo3`を変更・保存せず、モデルを保存せず
 
 ### AIが勝手に保存しますか？
 
-いいえ。Phase 1には保存Toolを使う処理はありません。
+いいえ。Phase 1にもPhase 2Aにも保存Toolを使う処理はありません。
 
 ### AIがPC全体を操作できますか？
 
