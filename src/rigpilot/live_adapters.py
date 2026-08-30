@@ -19,6 +19,10 @@ class ScreenshotUnavailableError(LiveAdapterError):
     """Raised when PC Control's screenshot policy does not permit capture."""
 
 
+class CandidateOpenDialogError(LiveAdapterError):
+    """Candidate Open could not establish the expected file dialog safely."""
+
+
 def _value(data: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         if key in data:
@@ -134,6 +138,8 @@ class WindowsPcControlAdapter:
     }
     _SCREENSHOT_MAX_WAIT_SECONDS = 35.0
     _SCREENSHOT_MAX_STATUS_CHECKS = 8
+    _CANDIDATE_OPEN_MAX_POLLS = 10
+    _CANDIDATE_OPEN_POLL_SECONDS = 0.25
 
     def __init__(self, client: McpToolSession) -> None:
         self.client = client
@@ -141,9 +147,13 @@ class WindowsPcControlAdapter:
     async def verify_schema(self) -> None:
         await self.client.require_tools(self._TOOLS)
 
+    async def verify_candidate_open_schema(self) -> None:
+        """Confirm only the coordinate-free GUI actions used to open a Candidate."""
+        await self.client.require_tools(self._TOOLS | {"hotkey", "type_text", "press_key"})
+
     async def verify_candidate_save_schema(self) -> None:
-        """Confirm only the two PC actions required by the Phase 2B save gate."""
-        await self.client.require_tools(self._TOOLS | {"open_allowed_path", "hotkey"})
+        """Confirm only the guarded GUI actions used by the Phase 2B path."""
+        await self.verify_candidate_open_schema()
 
     async def get_status(self) -> dict[str, Any]:
         return await self.client.call_json("get_control_status")
@@ -228,6 +238,85 @@ class WindowsPcControlAdapter:
     async def open_allowed_candidate_model(self, model_path: Path) -> None:
         """Open a path already accepted by CandidateManager's project boundary."""
         await self._open_allowed_path(model_path)
+
+    async def open_candidate_in_cubism(self, candidate_path: Path) -> None:
+        """Open a verified Candidate through Cubism's own Open dialog.
+
+        This deliberately avoids ``open_allowed_path`` because Shell opening a
+        second .cmo3 did not switch CubismExternalEditMCP's active document.
+        The method never uses screen coordinates and sends no save/edit key.
+        """
+        await self.verify_candidate_open_schema()
+        if not candidate_path.is_absolute() or candidate_path.suffix.casefold() != ".cmo3":
+            raise CandidateOpenDialogError("Candidate Openの対象パスが不正です")
+        baseline = await self._windows()
+        await self.focus_cubism()
+        result = await self.client.call_json("hotkey", {"keys": ["ctrl", "o"]})
+        if result.get("ok") is not True:
+            raise CandidateOpenDialogError("CubismへCtrl+Oを送信できませんでした")
+        dialog = await self._wait_for_open_dialog(baseline)
+        typed = await self.client.call_json(
+            "type_text", {"text": str(candidate_path), "use_clipboard": False}
+        )
+        if typed.get("ok") is not True:
+            raise CandidateOpenDialogError("Candidateパスをファイル選択ダイアログへ入力できませんでした")
+        entered = await self.client.call_json("press_key", {"key": "enter"})
+        if entered.get("ok") is not True:
+            raise CandidateOpenDialogError("Candidate OpenのEnterを送信できませんでした")
+        await self._wait_for_open_dialog_to_close(baseline, dialog)
+
+    async def _windows(self) -> list[dict[str, Any]]:
+        data = await self.client.call_data("list_windows", {"limit": 80})
+        windows = data.get("windows", data) if isinstance(data, dict) else data
+        if not isinstance(windows, list):
+            raise CandidateOpenDialogError("Windows一覧の形式が正しくありません")
+        return [item for item in windows if isinstance(item, dict)]
+
+    async def _wait_for_open_dialog(self, baseline: list[dict[str, Any]]) -> dict[str, Any]:
+        baseline_handles = {self._window_handle(item) for item in baseline}
+        for attempt in range(self._CANDIDATE_OPEN_MAX_POLLS):
+            current = await self._windows()
+            new_windows = [item for item in current if self._window_handle(item) not in baseline_handles]
+            dialogs = [item for item in new_windows if self._is_open_dialog(item)]
+            unexpected = [item for item in new_windows if not self._is_open_dialog(item)]
+            if unexpected:
+                raise CandidateOpenDialogError("Candidate Open中に想定外のダイアログが表示されました")
+            if len(dialogs) == 1:
+                return dialogs[0]
+            if len(dialogs) > 1:
+                raise CandidateOpenDialogError("Candidate Openのファイル選択ダイアログを一意に特定できません")
+            if attempt + 1 < self._CANDIDATE_OPEN_MAX_POLLS:
+                await asyncio.sleep(self._CANDIDATE_OPEN_POLL_SECONDS)
+        raise CandidateOpenDialogError("Candidate Openのファイル選択ダイアログを確認できません")
+
+    async def _wait_for_open_dialog_to_close(
+        self, baseline: list[dict[str, Any]], dialog: dict[str, Any]
+    ) -> None:
+        baseline_handles = {self._window_handle(item) for item in baseline}
+        dialog_handle = self._window_handle(dialog)
+        for attempt in range(self._CANDIDATE_OPEN_MAX_POLLS):
+            current = await self._windows()
+            current_handles = {self._window_handle(item) for item in current}
+            new_windows = [
+                item for item in current
+                if self._window_handle(item) not in baseline_handles and self._window_handle(item) != dialog_handle
+            ]
+            if new_windows:
+                raise CandidateOpenDialogError("Candidate Open後に想定外のダイアログが表示されました")
+            if dialog_handle not in current_handles:
+                return
+            if attempt + 1 < self._CANDIDATE_OPEN_MAX_POLLS:
+                await asyncio.sleep(self._CANDIDATE_OPEN_POLL_SECONDS)
+        raise CandidateOpenDialogError("Candidate Openのファイル選択ダイアログが閉じませんでした")
+
+    @staticmethod
+    def _window_handle(window: dict[str, Any]) -> int:
+        value = window.get("hwnd")
+        return int(value) if isinstance(value, int) else -1
+
+    @staticmethod
+    def _is_open_dialog(window: dict[str, Any]) -> bool:
+        return str(window.get("title", "")).strip().casefold() in {"open", "開く"}
 
     async def save_current_candidate(self) -> None:
         """Send the single guarded save gesture permitted by Phase 2B.

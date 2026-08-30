@@ -8,7 +8,7 @@ from rigpilot.candidates import (
     CandidateSandbox,
     CandidateSandboxError,
 )
-from rigpilot.live_adapters import LiveIdentity
+from rigpilot.live_adapters import CandidateOpenDialogError, LiveIdentity
 from rigpilot.models import CandidateStatus
 from rigpilot.probe import EmergencyStopError
 from rigpilot.validation import ValidationPlan, ValidationReport
@@ -20,10 +20,14 @@ class FakeCubism:
         self.identity = LiveIdentity("model-1", "document-1", "Modeling", model_path)
         self._pending_model_path: Path | None = None
         self._pending_open_reads = 0
+        self._pending_document_uid: str | None = None
         self.label_color = "undefined"
         self.edits: list[tuple[str, str]] = []
 
     async def verify_edit_schema(self) -> None:
+        return None
+
+    async def verify_schema(self) -> None:
         return None
 
     async def get_status(self) -> dict[str, bool]:
@@ -36,8 +40,11 @@ class FakeCubism:
         if self._pending_model_path is not None:
             self._pending_open_reads -= 1
             if self._pending_open_reads <= 0:
-                self.identity = LiveIdentity("model-1", "document-2", "Modeling", self._pending_model_path)
+                self.identity = LiveIdentity(
+                    "model-1", self._pending_document_uid or "document-2", "Modeling", self._pending_model_path
+                )
                 self._pending_model_path = None
+                self._pending_document_uid = None
         return {
             "ModelingDocuments": [
                 {
@@ -61,9 +68,10 @@ class FakeCubism:
         self.edits.append((part_id, color))
         self.label_color = color
 
-    def open_candidate(self, path: Path, *, delay_reads: int) -> None:
+    def open_candidate(self, path: Path, *, delay_reads: int, document_uid: str | None = None) -> None:
         self._pending_model_path = path
         self._pending_open_reads = delay_reads
+        self._pending_document_uid = document_uid
 
 
 class FakePcControl:
@@ -73,6 +81,8 @@ class FakePcControl:
         *,
         open_changes_document: bool = True,
         open_delay_reads: int = 0,
+        open_reuses_document_uid: bool = False,
+        open_error: Exception | None = None,
         stop_after: int | None = None,
         control_stopped: bool = False,
         emergency_stop_file_exists: bool = False,
@@ -80,6 +90,8 @@ class FakePcControl:
         self.cubism = cubism
         self.open_changes_document = open_changes_document
         self.open_delay_reads = open_delay_reads
+        self.open_reuses_document_uid = open_reuses_document_uid
+        self.open_error = open_error
         self.stop_after = stop_after
         self.control_stopped = control_stopped
         self.emergency_stop_file_exists = emergency_stop_file_exists
@@ -88,6 +100,9 @@ class FakePcControl:
         self.saves = 0
 
     async def verify_candidate_save_schema(self) -> None:
+        return None
+
+    async def verify_candidate_open_schema(self) -> None:
         return None
 
     async def get_status(self) -> dict[str, object]:
@@ -103,7 +118,16 @@ class FakePcControl:
     async def open_allowed_candidate_model(self, path: Path) -> None:
         self.opened = path
         if self.open_changes_document:
-            self.cubism.open_candidate(path, delay_reads=self.open_delay_reads)
+            self.cubism.open_candidate(
+                path,
+                delay_reads=self.open_delay_reads,
+                document_uid="document-1" if self.open_reuses_document_uid else None,
+            )
+
+    async def open_candidate_in_cubism(self, path: Path) -> None:
+        if self.open_error is not None:
+            raise self.open_error
+        await self.open_allowed_candidate_model(path)
 
     async def focus_cubism(self) -> None:
         return None
@@ -157,6 +181,60 @@ class CandidateSandboxTests(unittest.TestCase):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=False))
             self.assertEqual(list((record.root / "candidates").iterdir()), [])
             self.assertEqual(pc.saves, 0)
+            self.assertIsNone(pc.opened)
+
+    def test_open_only_switches_document_without_edit_save_or_validation(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism)
+            validator = FakeValidator()
+            report = asyncio.run(
+                CandidateSandbox(cubism, pc, validator=validator).open_only(
+                    record, emergency_stop_verified=True
+                )
+            )
+            self.assertEqual(report.final_status, CandidateStatus.OPENED)
+            self.assertEqual(report.model_uid, "model-1")
+            self.assertEqual(report.document_uid, "document-2")
+            self.assertEqual(report.candidate_path.read_bytes(), b"model")
+            self.assertEqual(pc.saves, 0)
+            self.assertEqual(cubism.edits, [])
+            self.assertEqual(validator.calls, 0)
+
+    def test_open_only_identity_mismatch_blocks_edit_and_save(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism, open_changes_document=False)
+            with self.assertRaisesRegex(Exception, "文書パス"):
+                asyncio.run(
+                    CandidateSandbox(cubism, pc, validator=FakeValidator()).open_only(
+                        record, emergency_stop_verified=True
+                    )
+                )
+            candidate_json = next((record.root / "candidates").glob("candidate-*/candidate.json"))
+            candidate = CandidateManager().load(record, candidate_json.parent.name)
+            self.assertEqual(candidate.status, CandidateStatus.NEEDS_HUMAN_REVIEW)
+            self.assertEqual(pc.saves, 0)
+            self.assertEqual(cubism.edits, [])
+
+    def test_open_only_reused_document_uid_blocks_edit_and_save(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism, open_reuses_document_uid=True)
+            with self.assertRaisesRegex(Exception, "document UID"):
+                asyncio.run(
+                    CandidateSandbox(cubism, pc, validator=FakeValidator()).open_only(
+                        record, emergency_stop_verified=True
+                    )
+                )
+            candidate_json = next((record.root / "candidates").glob("candidate-*/candidate.json"))
+            candidate = CandidateManager().load(record, candidate_json.parent.name)
+            self.assertEqual(candidate.status, CandidateStatus.NEEDS_HUMAN_REVIEW)
+            self.assertEqual(pc.saves, 0)
+            self.assertEqual(cubism.edits, [])
 
     def test_stop_file_blocks_before_candidate_creation(self) -> None:
         temporary, record = self.make_record()
@@ -167,6 +245,7 @@ class CandidateSandboxTests(unittest.TestCase):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
             self.assertEqual(list((record.root / "candidates").iterdir()), [])
             self.assertEqual(pc.saves, 0)
+            self.assertIsNone(pc.opened)
 
     def test_control_stopped_blocks_before_candidate_creation(self) -> None:
         temporary, record = self.make_record()
@@ -177,6 +256,7 @@ class CandidateSandboxTests(unittest.TestCase):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
             self.assertEqual(list((record.root / "candidates").iterdir()), [])
             self.assertEqual(pc.saves, 0)
+            self.assertIsNone(pc.opened)
 
     def test_candidate_save_changes_only_candidate_then_rejects_without_deleting(self) -> None:
         temporary, record = self.make_record()
@@ -193,6 +273,10 @@ class CandidateSandboxTests(unittest.TestCase):
             self.assertEqual(pc.saves, 1)
             self.assertEqual(validator.target.role, "candidate")
             self.assertEqual(cubism.edits, [("PartA", "blue")])
+            candidate_json = next((record.root / "candidates").glob("candidate-*/candidate.json"))
+            candidate = CandidateManager().load(record, candidate_json.parent.name)
+            self.assertEqual(candidate.model_uid, "model-1")
+            self.assertEqual(candidate.document_uid, "document-2")
 
     def test_candidate_open_waits_for_identity_switch_before_editing(self) -> None:
         temporary, record = self.make_record()
@@ -212,18 +296,32 @@ class CandidateSandboxTests(unittest.TestCase):
         with temporary:
             cubism = FakeCubism(record.working_model)
             pc = FakePcControl(cubism, open_changes_document=False)
-            with self.assertRaisesRegex(Exception, "Candidateコピー"):
+            with self.assertRaisesRegex(Exception, "文書パス"):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
             candidate_json = next((record.root / "candidates").glob("candidate-*/candidate.json"))
             candidate = CandidateManager().load(record, candidate_json.parent.name)
             self.assertEqual(candidate.status, CandidateStatus.NEEDS_HUMAN_REVIEW)
+            self.assertEqual(pc.saves, 0)
+            self.assertEqual(cubism.edits, [])
+
+    def test_open_timeout_keeps_candidate_for_human_review(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism, open_error=CandidateOpenDialogError("ファイル選択ダイアログを確認できません"))
+            with self.assertRaises(CandidateOpenDialogError):
+                asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
+            candidate_json = next((record.root / "candidates").glob("candidate-*/candidate.json"))
+            candidate = CandidateManager().load(record, candidate_json.parent.name)
+            self.assertEqual(candidate.status, CandidateStatus.NEEDS_HUMAN_REVIEW)
+            self.assertEqual(cubism.edits, [])
             self.assertEqual(pc.saves, 0)
 
     def test_emergency_stop_after_edit_blocks_candidate_without_saving(self) -> None:
         temporary, record = self.make_record()
         with temporary:
             cubism = FakeCubism(record.working_model)
-            pc = FakePcControl(cubism, stop_after=3)
+            pc = FakePcControl(cubism, stop_after=4)
             with self.assertRaises(EmergencyStopError):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
             candidate_json = next((record.root / "candidates").glob("candidate-*/candidate.json"))
@@ -236,7 +334,7 @@ class CandidateSandboxTests(unittest.TestCase):
         temporary, record = self.make_record()
         with temporary:
             cubism = FakeCubism(record.working_model)
-            pc = FakePcControl(cubism, stop_after=4)
+            pc = FakePcControl(cubism, stop_after=5)
             validator = FakeValidator()
             with self.assertRaises(EmergencyStopError):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=validator).run(record, emergency_stop_verified=True))

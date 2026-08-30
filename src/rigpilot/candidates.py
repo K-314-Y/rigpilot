@@ -48,6 +48,20 @@ class CandidateSandboxReport:
     final_status: CandidateStatus
 
 
+@dataclass(frozen=True)
+class CandidateOpenReport:
+    """Result of the no-edit, no-save Candidate Open stage."""
+
+    candidate_id: str
+    candidate_path: Path
+    candidate_sha256: str
+    source_hash_unchanged: bool
+    working_hash_unchanged: bool
+    model_uid: str
+    document_uid: str
+    final_status: CandidateStatus
+
+
 class CandidateSandboxError(ProbeError):
     """A candidate could not safely advance to the next isolated stage."""
 
@@ -198,6 +212,55 @@ class CandidateSandbox:
         self.manager = manager or CandidateManager()
         self.validator = validator or AutomaticModelValidator(cubism, pc_control)
 
+    async def open_only(self, record: ProjectRecord, *, emergency_stop_verified: bool) -> CandidateOpenReport:
+        """Create and open a Candidate, then prove its identity without editing it.
+
+        This deliberately performs neither a Cubism edit nor Ctrl+S nor
+        validation.  It is the live gate for the Candidate Open repair.
+        """
+        plan = self.manager.plan(record)
+        if not emergency_stop_verified:
+            raise CandidateSandboxError(
+                "Candidate Openは、Windows PC Control MCPのEmergency Stopを手動確認するまでBLOCKEDです"
+            )
+        await self.cubism.verify_schema()
+        await self.pc_control.verify_candidate_open_schema()
+        await self._ensure_not_stopped()
+        status = await self.cubism.get_status()
+        if not status.get("connected") or not status.get("registered") or not status.get("approved"):
+            raise CandidateSandboxError("Cubism MCPの接続またはAllow承認を確認できません")
+        working_identity = await self._read_document_identity(record.working_model)
+
+        candidate = self.manager.create(record, plan)
+        try:
+            await self.pc_control.open_candidate_in_cubism(candidate.model_path)
+            await self._ensure_not_stopped()
+            identity = await self._wait_for_candidate_identity(candidate, working_identity.document_uid)
+            candidate.status = CandidateStatus.OPENED
+            candidate.model_uid, candidate.document_uid = identity.model_uid, identity.document_uid
+            candidate.current_sha256 = sha256_file(candidate.model_path)
+            if candidate.current_sha256 != candidate.initial_sha256:
+                raise CandidateSandboxError("Candidate Open中にCandidateファイルが変化しました")
+            self.manager.save(candidate, record)
+            return CandidateOpenReport(
+                candidate.candidate_id,
+                candidate.model_path,
+                candidate.current_sha256,
+                sha256_file(record.source_model) == record.source_sha256,
+                sha256_file(record.working_model) == record.working_sha256,
+                identity.model_uid,
+                identity.document_uid,
+                candidate.status,
+            )
+        except EmergencyStopError:
+            candidate.status = CandidateStatus.BLOCKED
+            self.manager.save(candidate, record)
+            raise
+        except Exception:
+            candidate.status = CandidateStatus.NEEDS_HUMAN_REVIEW
+            self.manager.save(candidate, record)
+            raise
+
     async def run(self, record: ProjectRecord, *, emergency_stop_verified: bool) -> CandidateSandboxReport:
         """Create, edit, save, validate, then retain a rejected candidate.
 
@@ -218,12 +281,13 @@ class CandidateSandbox:
             raise CandidateSandboxError("Cubism MCPの接続またはAllow承認を確認できません")
         if not status.get("edit_approved"):
             raise CandidateSandboxError("Candidate編集にはCubismのEdit承認が必要です")
+        working_identity = await self._read_document_identity(record.working_model)
 
         candidate = self.manager.create(record, plan)
         try:
-            await self.pc_control.open_allowed_candidate_model(candidate.model_path)
-            await self.pc_control.focus_cubism()
-            identity = await self._wait_for_candidate_identity(candidate)
+            await self.pc_control.open_candidate_in_cubism(candidate.model_path)
+            await self._ensure_not_stopped()
+            identity = await self._wait_for_candidate_identity(candidate, working_identity.document_uid)
             candidate.status = CandidateStatus.OPENED
             candidate.model_uid, candidate.document_uid = identity.model_uid, identity.document_uid
             self.manager.save(candidate, record)
@@ -310,14 +374,16 @@ class CandidateSandbox:
             await asyncio.sleep(self._HASH_POLL_SECONDS)
         raise CandidateSandboxError("Candidate保存後のSHA-256変化と安定化を確認できません")
 
-    async def _read_candidate_identity(self, candidate: CandidateRecord) -> LiveIdentity:
+    async def _read_document_identity(self, expected_path: Path) -> LiveIdentity:
         model_uid = await self.cubism.get_model_uid()
         document_uid, model_path = self._document_for_model(await self.cubism.get_documents(), model_uid)
-        if not self._same_path(model_path, candidate.model_path):
-            raise IdentityMismatchError("Cubismで開いている文書がCandidateコピーと一致しません")
+        if not self._same_path(model_path, expected_path):
+            raise IdentityMismatchError("Cubismで開いている文書パスが期待値と一致しません")
         return LiveIdentity(model_uid, document_uid, await self.cubism.get_current_edit_mode(), model_path)
 
-    async def _wait_for_candidate_identity(self, candidate: CandidateRecord) -> LiveIdentity:
+    async def _wait_for_candidate_identity(
+        self, candidate: CandidateRecord, previous_document_uid: str
+    ) -> LiveIdentity:
         """Allow Cubism's asynchronous document switch to become observable.
 
         This bounded loop only reads identity. It never retries opening,
@@ -326,7 +392,10 @@ class CandidateSandbox:
         last_error: IdentityMismatchError | None = None
         for attempt in range(self._OPEN_IDENTITY_MAX_POLLS):
             try:
-                return await self._read_candidate_identity(candidate)
+                identity = await self._read_document_identity(candidate.model_path)
+                if identity.document_uid == previous_document_uid:
+                    raise IdentityMismatchError("Candidate Open後もdocument UIDがworking文書から切り替わっていません")
+                return identity
             except IdentityMismatchError as error:
                 last_error = error
                 if attempt + 1 < self._OPEN_IDENTITY_MAX_POLLS:
