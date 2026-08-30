@@ -5,10 +5,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from rigpilot.live_adapters import LiveIdentity
-from rigpilot.models import ParameterRange, WorkflowState
+from rigpilot.models import ParameterRange, ValidationTarget, WorkflowState
 from rigpilot.probe import EmergencyStopError
 from rigpilot.validation import AutomaticModelValidator, ValidationOutcome
-from rigpilot.workspace import ProjectWorkspace
+from rigpilot.workspace import ProjectWorkspace, sha256_file
 
 
 class FakeCubism:
@@ -172,6 +172,19 @@ class AutomaticValidationTests(unittest.TestCase):
             report = asyncio.run(validator.run(record))
             self.assertTrue(report.all_restored)
             self.assertEqual(cubism.values, {item.parameter_id: item.default for item in parameters()})
+
+    def test_candidate_target_does_not_replace_the_working_model(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            candidate = record.root / "candidates" / "candidate-test" / record.working_model.name
+            candidate.parent.mkdir()
+            candidate.write_bytes(record.working_model.read_bytes())
+            working_before = record.working_model.read_bytes()
+            target = ValidationTarget(candidate, sha256_file(candidate), "candidate")
+            report = asyncio.run(self.make_validator(FakeCubism(candidate, parameters()), FakePcControl()).run(record, target=target))
+            self.assertEqual(report.target_role, "candidate")
+            self.assertTrue(report.target_hash_unchanged)
+            self.assertEqual(record.working_model.read_bytes(), working_before)
 
     def test_screenshot_failure_restores_every_parameter_and_stops(self) -> None:
         temporary, record = self.make_record()

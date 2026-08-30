@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import AuditLogger
+from .candidates import CandidateManager, CandidateSandbox
 from .config import ConfigurationError, McpConfiguration
 from .edit_transaction import SafeEditTransaction
 from .live_adapters import CubismExternalEditAdapter, WindowsPcControlAdapter
@@ -305,6 +306,105 @@ def _edit_test(project_file: Path, config_path: Path, *, dry_run: bool, as_json:
     ) else 2
 
 
+async def _run_candidate_test(
+    project_file: Path, config_path: Path, *, emergency_stop_verified: bool
+) -> Any:
+    record = JsonProjectStore().load(project_file)
+    config = McpConfiguration.load(config_path)
+    async with open_mcp_session(config.cubism_server()) as cubism_session, open_mcp_session(config.pc_control_server()) as pc_session:
+        sandbox = CandidateSandbox(
+            CubismExternalEditAdapter(cubism_session), WindowsPcControlAdapter(pc_session)
+        )
+        return await sandbox.run(record, emergency_stop_verified=emergency_stop_verified)
+
+
+def _candidate_test(
+    project_file: Path,
+    config_path: Path,
+    *,
+    dry_run: bool,
+    emergency_stop_verified: bool,
+    as_json: bool,
+) -> int:
+    """Plan candidate-only work without opening Cubism or writing files.
+
+    The real save stage remains deliberately unavailable until the configured
+    PC Control emergency-stop registration has been manually verified.  This
+    prevents a candidate save from becoming an unguarded first interaction.
+    """
+    record = JsonProjectStore().load(project_file)
+    if dry_run:
+        plan = CandidateManager().plan(record)
+        payload = {
+            "phase": "2B",
+            "dry_run": True,
+            "base_path": str(plan.base_path),
+            "base_sha256": plan.base_sha256,
+            "candidate_id": plan.candidate_id,
+            "candidate_path": str(plan.candidate_path),
+            "allowed_edit": "Part LabelColorType only",
+            "save_target": "Candidate only",
+            "source_and_working": "UNCHANGED",
+            "export": "NOT PERFORMED",
+            "filesystem_writes": 0,
+        }
+        if as_json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            print("RigPilot Phase 2B Candidate Sandbox 計画")
+            print(f"Base: {plan.base_path}")
+            print(f"Base SHA-256: {plan.base_sha256}")
+            print(f"Candidate: {plan.candidate_path}")
+            print("編集予定: Part LabelColorType のみ")
+            print("Save先: Candidate のみ")
+            print("source / working: 変更しません")
+            print("Export: 実行しません")
+        return 0
+    if not emergency_stop_verified:
+        print("Candidate実機保存は開始していません。")
+        print("先にWindows PC Control MCPのEmergency Stopを手動確認し、--confirm-emergency-stop を付けて再実行してください。")
+        return 3
+    report = asyncio.run(_run_candidate_test(project_file, config_path, emergency_stop_verified=True))
+    payload = {
+        "phase": "2B",
+        "candidate_id": report.candidate_id,
+        "candidate_path": str(report.candidate_path),
+        "candidate_sha256": report.candidate_sha256,
+        "source_hash_unchanged": report.source_hash_unchanged,
+        "working_hash_unchanged": report.working_hash_unchanged,
+        "candidate_validation": report.validation.to_dict(),
+        "final_status": report.final_status.value,
+        "promoted": False,
+    }
+    AuditLogger(record.root / "logs" / "audit.jsonl").record(
+        project_id=record.project_id,
+        step="phase_2b_candidate_sandbox",
+        adapter="candidate_sandbox",
+        operation="candidate_only_label_color_save_and_validation",
+        outcome="success",
+        model_uid=report.validation.model_uid,
+        document_uid=report.validation.document_uid,
+        metadata={
+            "candidate_id": report.candidate_id,
+            "candidate_sha256": report.candidate_sha256,
+            "source_hash_unchanged": report.source_hash_unchanged,
+            "working_hash_unchanged": report.working_hash_unchanged,
+            "final_status": report.final_status.value,
+            "promoted": False,
+        },
+    )
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("RigPilot Phase 2B Candidate Sandbox")
+        print(f"Candidate: {report.candidate_path}")
+        print(f"Candidate SHA-256: {report.candidate_sha256}")
+        print(f"Candidate検査: {'PASS' if report.validation.all_restored else 'FAIL'}")
+        print("working/source: UNCHANGED" if report.source_hash_unchanged and report.working_hash_unchanged else "working/source: CHANGED")
+        print("Promote: 実行しません（Candidateは保持してREJECTEDにします）")
+    return 0
+
+
 def _resume_after_review(project_file: Path) -> None:
     record = JsonProjectStore().load(project_file)
     if record.state not in {WorkflowState.FAILED, WorkflowState.NEEDS_HUMAN_REVIEW}:
@@ -419,6 +519,19 @@ def build_parser() -> argparse.ArgumentParser:
     edit_test.add_argument("--dry-run", action="store_true", help="編集せず、対象と取引計画だけを確認します。")
     edit_test.add_argument("--json", action="store_true", help="機械可読なJSONで表示します。")
 
+    candidate_test = subcommands.add_parser(
+        "candidate-test", help="Phase 2Bの候補モデル隔離・保存計画を確認します。"
+    )
+    candidate_test.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
+    candidate_test.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
+    candidate_test.add_argument("--dry-run", action="store_true", help="ファイルもMCPも変更せず、Candidate計画だけを表示します。")
+    candidate_test.add_argument(
+        "--confirm-emergency-stop",
+        action="store_true",
+        help="Windows PC Control MCPのEmergency Stopを手動確認済みであることを明示します。",
+    )
+    candidate_test.add_argument("--json", action="store_true", help="機械可読なJSONで表示します。")
+
     open_working = subcommands.add_parser("open-working", help="安全なworkingコピーを既定アプリで開きます。")
     open_working.add_argument("--project", required=True, type=Path, help="project.jsonへのパス")
     open_working.add_argument("--config", type=Path, default=Path("rigpilot.local.json"), help="ローカルMCP設定ファイル")
@@ -463,6 +576,14 @@ def main(argv: list[str] | None = None) -> int:
             return _validate(args.project, args.config, dry_run=args.dry_run, as_json=args.json)
         if args.command == "edit-test":
             return _edit_test(args.project, args.config, dry_run=args.dry_run, as_json=args.json)
+        if args.command == "candidate-test":
+            return _candidate_test(
+                args.project,
+                args.config,
+                dry_run=args.dry_run,
+                emergency_stop_verified=args.confirm_emergency_stop,
+                as_json=args.json,
+            )
         if args.command == "open-working":
             asyncio.run(_open_working_model(args.project, args.config))
             print("workingコピーを開く要求を送信しました。Windowsの確認が出た場合は内容を確認して承認してください。")

@@ -141,6 +141,10 @@ class WindowsPcControlAdapter:
     async def verify_schema(self) -> None:
         await self.client.require_tools(self._TOOLS)
 
+    async def verify_candidate_save_schema(self) -> None:
+        """Confirm only the two PC actions required by the Phase 2B save gate."""
+        await self.client.require_tools(self._TOOLS | {"open_allowed_path", "hotkey"})
+
     async def get_status(self) -> dict[str, Any]:
         return await self.client.call_json("get_control_status")
 
@@ -219,7 +223,26 @@ class WindowsPcControlAdapter:
         return "EMPTY_IMAGE_RESPONSE"
 
     async def open_allowed_working_model(self, model_path: Path) -> None:
+        await self._open_allowed_path(model_path)
+
+    async def open_allowed_candidate_model(self, model_path: Path) -> None:
+        """Open a path already accepted by CandidateManager's project boundary."""
+        await self._open_allowed_path(model_path)
+
+    async def save_current_candidate(self) -> None:
+        """Send the single guarded save gesture permitted by Phase 2B.
+
+        CandidateSandbox confirms Cubism foreground, document identity, path,
+        emergency-stop state and base hashes immediately before this call.  A
+        successful response is still insufficient; the sandbox also requires
+        the candidate file hash to change and stabilize.
+        """
+        result = await self.client.call_json("hotkey", {"keys": ["ctrl", "s"]})
+        if result.get("ok") is False:
+            raise LiveAdapterError("Candidate保存ショートカットを送信できませんでした")
+
+    async def _open_allowed_path(self, model_path: Path) -> None:
         await self.client.require_tools({"open_allowed_path"})
         result = await self.client.call_json("open_allowed_path", {"path": str(model_path)})
         if result.get("ok") is not True:
-            raise LiveAdapterError("workingコピーをCubismで開けませんでした")
+            raise LiveAdapterError("許可済みのモデルコピーをCubismで開けませんでした")

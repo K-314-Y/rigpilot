@@ -34,6 +34,19 @@ class WorkflowState(StrEnum):
     NEEDS_HUMAN_REVIEW = "needs_human_review"
 
 
+class CandidateStatus(StrEnum):
+    CREATED = "created"
+    OPENED = "opened"
+    EDITED = "edited"
+    SAVED = "saved"
+    VALIDATED = "validated"
+    PROMOTABLE = "promotable"
+    REJECTED = "rejected"
+    PROMOTED = "promoted"
+    BLOCKED = "blocked"
+    NEEDS_HUMAN_REVIEW = "needs_human_review"
+
+
 @dataclass(frozen=True)
 class ModelIdentity:
     model_uid: str
@@ -59,6 +72,46 @@ class Checkpoint:
     path: Path
     sha256: str
     created_at: str
+
+
+@dataclass
+class CandidateRecord:
+    candidate_id: str
+    project_id: str
+    model_path: Path
+    base_model_path: Path
+    base_sha256: str
+    initial_sha256: str
+    current_sha256: str
+    status: CandidateStatus = CandidateStatus.CREATED
+    model_uid: str | None = None
+    document_uid: str | None = None
+    validation_result: dict[str, Any] | None = None
+    promotable: bool = False
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["model_path"] = str(self.model_path)
+        data["base_model_path"] = str(self.base_model_path)
+        data["status"] = self.status.value
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CandidateRecord:
+        copied = dict(data)
+        copied["model_path"] = Path(copied["model_path"])
+        copied["base_model_path"] = Path(copied["base_model_path"])
+        copied["status"] = CandidateStatus(copied["status"])
+        return cls(**copied)
+
+
+@dataclass(frozen=True)
+class ValidationTarget:
+    model_path: Path
+    expected_sha256: str
+    role: str
 
 
 @dataclass

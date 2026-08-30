@@ -36,7 +36,7 @@ class ProjectWorkspace:
             raise WorkspaceError(f"Project already exists: {project_id}")
         source_dir = project_root / "source"
         working_dir = project_root / "working"
-        for directory in (source_dir, working_dir, project_root / "checkpoints", project_root / "exports", project_root / "logs"):
+        for directory in (source_dir, working_dir, project_root / "candidates", project_root / "checkpoints", project_root / "exports", project_root / "logs"):
             directory.mkdir(parents=True, exist_ok=True)
         source = source_dir / original.name
         working = working_dir / original.name

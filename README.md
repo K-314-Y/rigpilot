@@ -30,6 +30,19 @@ Phase 2Aは自動修正ではありません。CubismのEdit権限で、描画�
 
 2026-08-30に公式サンプルのworkingコピーで`LabelColorType`を`undefined → blue → undefined`として実機確認しました。一時編集・rollbackの読戻し、対象Part Objectの開始前後一致、最終Phase 1検査（10 PASS / 1 SKIPPED）、3ファイルのSHA-256不変、利用者の画面目視確認が成功しています。SaveとExportは実行していません。
 
+## Phase 2B: Candidate Sandbox Foundation（コード実装・実機保存は未実施）
+
+Phase 2Bは、`working/`を直接保存対象にせず、`candidates/candidate-.../`へ作成したコピーだけを編集・保存・検査するための基盤です。
+
+- `candidate-test --dry-run`はファイルもMCPも変更せず、候補パスと対象SHA-256だけを表示する
+- 通常実行は、Windows PC Control MCPのEmergency Stopを手動確認して`--confirm-emergency-stop`を明示しない限り、Candidate作成より前に停止する
+- 保存直前に緊急停止、Cubism前面化、model/document UID、Candidate文書パス、公式原本・source・workingのSHA-256を再確認する
+- 保存後はCandidateのSHA-256が変更され、連続読取りで安定した場合だけ候補検査へ進む
+- Candidate検査は明示的なCandidate対象を使うため、`working_model`を検査対象へ置き換えない
+- Phase 2Bは自動Promoteを実行しない。検査後のCandidateは削除せず`REJECTED`として保持する
+
+Fake MCPによる検証は完了しています。2026-08-30の実機開始ではWindows PC Control MCPがEmergency Stopホットキーを登録できないと報告したため、保存前に中断しました。Candidate作成・Candidate保存・Candidate Validation・利用者の画面確認は未実施です。
+
 ## 文書
 
 - [一般利用者向け使用書（日本語）](USER_GUIDE_JA.md)

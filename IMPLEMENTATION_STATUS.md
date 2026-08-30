@@ -77,6 +77,23 @@
 
 同日に`edit-test`を実行しました。`Part01HandR`の`LabelColorType`を`undefined → blue → undefined`として一時編集し、Edit Readback MATCH、Rollback Readback MATCH、対象Object Before/After IDENTICALを確認しました。続けてPhase 1 Validation Engineを1回実行し、10 PASS / 1 SKIPPED、全Parameter復元読取り一致、30回の画面取得を確認しました。公式原本、source、workingのSHA-256は不変で、Save・Exportは未実行です。利用者もモデル表示が開始前と同じであることを目視確認しました。詳細は`reports/phase-2a-edit-transaction-20260830T002638Z.json`にあります。
 
+## Phase 2B: Candidate Sandbox Foundation
+
+コード実装済み・Fake MCP確認済みです。実機のCandidate保存は未実施です。
+
+- Candidateは`project/candidates/candidate-.../<working名>.cmo3`にのみ作成し、初期SHA-256がworkingコピーと一致することを確認する
+- `CandidateRecord`はCandidateのパス、base/initial/current SHA-256、状態、model/document UID、検査結果、Promote可否を個別に保存する
+- Candidate以外のパス、パストラバーサル、既存Candidateディレクトリへの上書きを拒否する
+- `candidate-test --dry-run`はCandidateディレクトリ、MCP、Saveを一切呼ばない。通常実行は`--confirm-emergency-stop`がない限りCandidate作成前にBLOCKEDとする
+- 保存経路はCandidateだけを開き、Partの`LabelColorType`だけを変更し、保存直前に緊急停止、Cubismの前面化、UID、Candidate文書パス、source/working/公式原本のSHA-256を確認する
+- 保存応答だけでは成功とせず、CandidateファイルのSHA-256変化と連続読取りでの安定化を必須とする
+- Candidate Validationは`ValidationTarget(role="candidate")`を明示して実行し、ProjectRecordのworkingコピーを置き換えない
+- Phase 2Bは自動Promoteをしない。検査済みCandidateは削除せず`REJECTED`として残す
+
+2026-08-30の実機開始結果: Windows PC Control MCPがEmergency Stopホットキーを登録できないと報告したため、Candidateを作成する前に中断した。Candidate、working、source、公式原本への保存は行っていない。
+
+未確認: Windows PC Control MCPの実機Emergency Stop登録、Candidateの実機Save、Candidate SHA-256安定化、Candidate Validation、利用者の画面目視確認。
+
 ## 検証状態
 
 - IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、setup/doctor/verify-live/validate/edit-test CLI、使用書

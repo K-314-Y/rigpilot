@@ -18,7 +18,7 @@ from .live_adapters import (
     LiveIdentity,
     WindowsPcControlAdapter,
 )
-from .models import ParameterRange, ProjectRecord, WorkflowState
+from .models import ParameterRange, ProjectRecord, ValidationTarget, WorkflowState
 from .probe import EmergencyStopError, IdentityMismatchError, ProbeError
 from .state_machine import transition
 from .storage import JsonProjectStore
@@ -91,6 +91,8 @@ class ValidationReport:
     working_hash_unchanged: bool
     original_hash_unchanged: bool | None
     report_path: Path | None = None
+    target_role: str = "working"
+    target_hash_unchanged: bool = True
 
     @property
     def summary(self) -> dict[str, int]:
@@ -111,6 +113,8 @@ class ValidationReport:
             "source_hash_unchanged": self.source_hash_unchanged,
             "working_hash_unchanged": self.working_hash_unchanged,
             "original_hash_unchanged": self.original_hash_unchanged,
+            "target_role": self.target_role,
+            "target_hash_unchanged": self.target_hash_unchanged,
             "saved": False,
             "report_path": str(self.report_path) if self.report_path else None,
         }
@@ -147,20 +151,27 @@ class AutomaticModelValidator:
         self.focus_settle_seconds = focus_settle_seconds
         self.restore_on_emergency = restore_on_emergency
 
-    async def dry_run(self, record: ProjectRecord) -> ValidationReport:
+    async def dry_run(
+        self, record: ProjectRecord, *, target: ValidationTarget | None = None
+    ) -> ValidationReport:
+        validation_target = self._validation_target(record, target)
         state_before = record.state
         try:
-            identity, plan, _originals = await self._preflight(record)
+            identity, plan, _originals = await self._preflight(record, validation_target)
             return ValidationReport(
                 phase="1", dry_run=True, model_uid=identity.model_uid, document_uid=identity.document_uid,
                 plan=plan, checks=tuple(self._planned_result(check) for check in plan.checks), screenshots_captured=0,
                 all_restored=True, restore_readback=True, source_hash_unchanged=True,
                 working_hash_unchanged=True, original_hash_unchanged=True,
+                target_role=validation_target.role, target_hash_unchanged=True,
             )
         finally:
             record.state = state_before
 
-    async def run(self, record: ProjectRecord) -> ValidationReport:
+    async def run(
+        self, record: ProjectRecord, *, target: ValidationTarget | None = None
+    ) -> ValidationReport:
+        validation_target = self._validation_target(record, target)
         identity: LiveIdentity | None = None
         plan: ValidationPlan | None = None
         originals: dict[str, float] = {}
@@ -172,9 +183,10 @@ class AutomaticModelValidator:
         failure: Exception | None = None
         source_before = sha256_file(record.source_model)
         working_before = sha256_file(record.working_model)
+        target_before = sha256_file(validation_target.model_path)
         original_before = self._original_hash(record)
         try:
-            identity, plan, originals = await self._preflight(record)
+            identity, plan, originals = await self._preflight(record, validation_target)
             restored = not originals
             self._move(record, WorkflowState.PROBING)
             await self._capture(record, identity, focus=True)
@@ -217,9 +229,10 @@ class AutomaticModelValidator:
                     record.state = failure_state
             source_unchanged = sha256_file(record.source_model) == source_before
             working_unchanged = sha256_file(record.working_model) == working_before
+            target_unchanged = sha256_file(validation_target.model_path) == target_before
             original_after = self._original_hash(record)
             original_unchanged = original_before == original_after if original_before is not None else None
-            if not source_unchanged or not working_unchanged or original_unchanged is False:
+            if not source_unchanged or not working_unchanged or not target_unchanged or original_unchanged is False:
                 record.state = WorkflowState.NEEDS_HUMAN_REVIEW
                 failure = ProbeError("検査中に監視対象の.cmo3のSHA-256が変化しました")
             if plan is None:
@@ -230,6 +243,7 @@ class AutomaticModelValidator:
                 screenshots_captured=screenshots, all_restored=restored,
                 restore_readback=restored, source_hash_unchanged=source_unchanged,
                 working_hash_unchanged=working_unchanged, original_hash_unchanged=original_unchanged,
+                target_role=validation_target.role, target_hash_unchanged=target_unchanged,
             )
             report = self._persist_report(record, report, restore_attempts, failure)
         if failure is not None:
@@ -240,11 +254,15 @@ class AutomaticModelValidator:
         JsonProjectStore().save(record)
         return report
 
-    async def _preflight(self, record: ProjectRecord) -> tuple[LiveIdentity, ValidationPlan, dict[str, float]]:
+    async def _preflight(
+        self, record: ProjectRecord, target: ValidationTarget
+    ) -> tuple[LiveIdentity, ValidationPlan, dict[str, float]]:
         if sha256_file(record.source_model) != record.source_sha256 or sha256_file(record.working_model) != record.working_sha256:
             raise ProbeError("検査開始前にsourceまたはworkingコピーのSHA-256が一致しません")
         if record.original_sha256 is not None and self._original_hash(record) != record.original_sha256:
             raise ProbeError("検査開始前に公式サンプル原本のSHA-256が一致しません")
+        if sha256_file(target.model_path) != target.expected_sha256:
+            raise ProbeError(f"検査対象({target.role})のSHA-256が記録値と一致しません")
         self._move(record, WorkflowState.CONNECTING)
         await self.cubism.verify_schema()
         await self.pc_control.verify_schema()
@@ -253,7 +271,7 @@ class AutomaticModelValidator:
         if not status.get("connected") or not status.get("registered") or not status.get("approved"):
             raise ProbeError("Cubism MCPの接続またはAllow承認を確認できません")
         self._move(record, WorkflowState.IDENTITY_CHECK)
-        identity = await self._read_identity(record, persist=False)
+        identity = await self._read_identity(record, target, persist=False)
         self._move(record, WorkflowState.ANALYZING)
         parameters = await self.cubism.get_parameters(identity.model_uid)
         await self.cubism.get_part_structure(identity.model_uid)
@@ -370,12 +388,14 @@ class AutomaticModelValidator:
                 await asyncio.sleep(self._READBACK_POLL_SECONDS)
         return False, readback
 
-    async def _read_identity(self, record: ProjectRecord, *, persist: bool) -> LiveIdentity:
+    async def _read_identity(
+        self, record: ProjectRecord, target: ValidationTarget, *, persist: bool
+    ) -> LiveIdentity:
         model_uid = await self.cubism.get_model_uid()
         documents = await self.cubism.get_documents()
         document_uid, model_path = self._document_for_model(documents, model_uid)
-        if not self._same_path(model_path, record.working_model):
-            raise IdentityMismatchError("Cubismで開いている文書がRigPilotのworkingコピーと一致しません")
+        if not self._same_path(model_path, target.model_path):
+            raise IdentityMismatchError(f"Cubismで開いている文書がRigPilotの{target.role}コピーと一致しません")
         identity = LiveIdentity(model_uid, document_uid, await self.cubism.get_current_edit_mode(), model_path)
         if persist:
             record.model_uid, record.document_uid = model_uid, document_uid
@@ -422,7 +442,8 @@ class AutomaticModelValidator:
             model_uid=record.model_uid, document_uid=record.document_uid,
             metadata={"saved": False, "summary": stored.summary, "screenshots_captured": report.screenshots_captured,
                       "all_restored": report.all_restored, "source_hash_unchanged": report.source_hash_unchanged,
-                      "working_hash_unchanged": report.working_hash_unchanged},
+                      "working_hash_unchanged": report.working_hash_unchanged,
+                      "target_role": report.target_role, "target_hash_unchanged": report.target_hash_unchanged},
         )
         return stored
 
@@ -454,6 +475,16 @@ class AutomaticModelValidator:
     @staticmethod
     def _original_hash(record: ProjectRecord) -> str | None:
         return sha256_file(record.original_model) if record.original_model and record.original_model.is_file() else None
+
+    @staticmethod
+    def _validation_target(record: ProjectRecord, target: ValidationTarget | None) -> ValidationTarget:
+        resolved = target or ValidationTarget(record.working_model, record.working_sha256, "working")
+        path = resolved.model_path.resolve()
+        if path.suffix.casefold() != ".cmo3" or not path.is_file():
+            raise ProbeError("検査対象の.cmo3が見つかりません")
+        if resolved.role not in {"working", "candidate"}:
+            raise ProbeError("検査対象の役割が不正です")
+        return ValidationTarget(path, resolved.expected_sha256, resolved.role)
 
     @staticmethod
     def _document_for_model(documents: dict[str, Any], model_uid: str) -> tuple[str, Path]:
