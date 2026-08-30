@@ -182,6 +182,8 @@ class CandidateSandbox:
     _HASH_POLL_SECONDS = 0.25
     _HASH_MAX_POLLS = 20
     _HASH_STABLE_READS = 2
+    _OPEN_IDENTITY_MAX_POLLS = 12
+    _OPEN_IDENTITY_POLL_SECONDS = 0.25
 
     def __init__(
         self,
@@ -221,7 +223,7 @@ class CandidateSandbox:
         try:
             await self.pc_control.open_allowed_candidate_model(candidate.model_path)
             await self.pc_control.focus_cubism()
-            identity = await self._read_candidate_identity(candidate)
+            identity = await self._wait_for_candidate_identity(candidate)
             candidate.status = CandidateStatus.OPENED
             candidate.model_uid, candidate.document_uid = identity.model_uid, identity.document_uid
             self.manager.save(candidate, record)
@@ -314,6 +316,23 @@ class CandidateSandbox:
         if not self._same_path(model_path, candidate.model_path):
             raise IdentityMismatchError("Cubismで開いている文書がCandidateコピーと一致しません")
         return LiveIdentity(model_uid, document_uid, await self.cubism.get_current_edit_mode(), model_path)
+
+    async def _wait_for_candidate_identity(self, candidate: CandidateRecord) -> LiveIdentity:
+        """Allow Cubism's asynchronous document switch to become observable.
+
+        This bounded loop only reads identity. It never retries opening,
+        editing, or focusing Cubism; a wrong document remains a hard stop.
+        """
+        last_error: IdentityMismatchError | None = None
+        for attempt in range(self._OPEN_IDENTITY_MAX_POLLS):
+            try:
+                return await self._read_candidate_identity(candidate)
+            except IdentityMismatchError as error:
+                last_error = error
+                if attempt + 1 < self._OPEN_IDENTITY_MAX_POLLS:
+                    await asyncio.sleep(self._OPEN_IDENTITY_POLL_SECONDS)
+        assert last_error is not None
+        raise last_error
 
     async def _guard_candidate_identity(self, candidate: CandidateRecord, identity: LiveIdentity) -> None:
         if await self.cubism.get_model_uid() != identity.model_uid:

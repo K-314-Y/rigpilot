@@ -18,6 +18,8 @@ from rigpilot.workspace import ProjectWorkspace, WorkspaceError
 class FakeCubism:
     def __init__(self, model_path: Path) -> None:
         self.identity = LiveIdentity("model-1", "document-1", "Modeling", model_path)
+        self._pending_model_path: Path | None = None
+        self._pending_open_reads = 0
         self.label_color = "undefined"
         self.edits: list[tuple[str, str]] = []
 
@@ -31,6 +33,11 @@ class FakeCubism:
         return self.identity.model_uid
 
     async def get_documents(self) -> dict[str, object]:
+        if self._pending_model_path is not None:
+            self._pending_open_reads -= 1
+            if self._pending_open_reads <= 0:
+                self.identity = LiveIdentity("model-1", "document-2", "Modeling", self._pending_model_path)
+                self._pending_model_path = None
         return {
             "ModelingDocuments": [
                 {
@@ -54,6 +61,10 @@ class FakeCubism:
         self.edits.append((part_id, color))
         self.label_color = color
 
+    def open_candidate(self, path: Path, *, delay_reads: int) -> None:
+        self._pending_model_path = path
+        self._pending_open_reads = delay_reads
+
 
 class FakePcControl:
     def __init__(
@@ -61,12 +72,14 @@ class FakePcControl:
         cubism: FakeCubism,
         *,
         open_changes_document: bool = True,
+        open_delay_reads: int = 0,
         stop_after: int | None = None,
         control_stopped: bool = False,
         emergency_stop_file_exists: bool = False,
     ) -> None:
         self.cubism = cubism
         self.open_changes_document = open_changes_document
+        self.open_delay_reads = open_delay_reads
         self.stop_after = stop_after
         self.control_stopped = control_stopped
         self.emergency_stop_file_exists = emergency_stop_file_exists
@@ -90,7 +103,7 @@ class FakePcControl:
     async def open_allowed_candidate_model(self, path: Path) -> None:
         self.opened = path
         if self.open_changes_document:
-            self.cubism.identity = LiveIdentity("model-1", "document-2", "Modeling", path)
+            self.cubism.open_candidate(path, delay_reads=self.open_delay_reads)
 
     async def focus_cubism(self) -> None:
         return None
@@ -179,6 +192,19 @@ class CandidateSandboxTests(unittest.TestCase):
             self.assertEqual(pc.opened, report.candidate_path)
             self.assertEqual(pc.saves, 1)
             self.assertEqual(validator.target.role, "candidate")
+            self.assertEqual(cubism.edits, [("PartA", "blue")])
+
+    def test_candidate_open_waits_for_identity_switch_before_editing(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism, open_delay_reads=2)
+            report = asyncio.run(
+                CandidateSandbox(cubism, pc, validator=FakeValidator()).run(
+                    record, emergency_stop_verified=True
+                )
+            )
+            self.assertEqual(report.final_status, CandidateStatus.REJECTED)
             self.assertEqual(cubism.edits, [("PartA", "blue")])
 
     def test_identity_mismatch_prevents_save_and_keeps_candidate_for_review(self) -> None:
