@@ -12,7 +12,7 @@ from rigpilot.live_adapters import LiveIdentity
 from rigpilot.models import CandidateStatus
 from rigpilot.probe import EmergencyStopError
 from rigpilot.validation import ValidationPlan, ValidationReport
-from rigpilot.workspace import ProjectWorkspace
+from rigpilot.workspace import ProjectWorkspace, WorkspaceError
 
 
 class FakeCubism:
@@ -60,14 +60,16 @@ class FakePcControl:
         self,
         cubism: FakeCubism,
         *,
-        hotkey_registered: bool = True,
         open_changes_document: bool = True,
         stop_after: int | None = None,
+        control_stopped: bool = False,
+        emergency_stop_file_exists: bool = False,
     ) -> None:
         self.cubism = cubism
-        self.hotkey_registered = hotkey_registered
         self.open_changes_document = open_changes_document
         self.stop_after = stop_after
+        self.control_stopped = control_stopped
+        self.emergency_stop_file_exists = emergency_stop_file_exists
         self.stop_checks = 0
         self.opened: Path | None = None
         self.saves = 0
@@ -76,14 +78,14 @@ class FakePcControl:
         return None
 
     async def get_status(self) -> dict[str, object]:
+        self.stop_checks += 1
         return {
-            "emergency_hotkey_registered": self.hotkey_registered,
-            "emergency_hotkey_status": "registered" if self.hotkey_registered else "unavailable",
+            "control_stopped": self.control_stopped or self.stop_after == self.stop_checks,
+            "emergency_stop_file_exists": self.emergency_stop_file_exists,
         }
 
     async def is_emergency_stopped(self) -> bool:
-        self.stop_checks += 1
-        return self.stop_after == self.stop_checks
+        return self.control_stopped or self.emergency_stop_file_exists or self.stop_after == self.stop_checks
 
     async def open_allowed_candidate_model(self, path: Path) -> None:
         self.opened = path
@@ -102,8 +104,10 @@ class FakePcControl:
 class FakeValidator:
     def __init__(self) -> None:
         self.target = None
+        self.calls = 0
 
     async def run(self, _record: object, *, target: object) -> ValidationReport:
+        self.calls += 1
         self.target = target
         return ValidationReport(
             phase="1",
@@ -141,12 +145,22 @@ class CandidateSandboxTests(unittest.TestCase):
             self.assertEqual(list((record.root / "candidates").iterdir()), [])
             self.assertEqual(pc.saves, 0)
 
-    def test_unregistered_hotkey_blocks_before_candidate_creation(self) -> None:
+    def test_stop_file_blocks_before_candidate_creation(self) -> None:
         temporary, record = self.make_record()
         with temporary:
             cubism = FakeCubism(record.working_model)
-            pc = FakePcControl(cubism, hotkey_registered=False)
-            with self.assertRaisesRegex(CandidateSandboxError, "登録済みではない"):
+            pc = FakePcControl(cubism, emergency_stop_file_exists=True)
+            with self.assertRaises(EmergencyStopError):
+                asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
+            self.assertEqual(list((record.root / "candidates").iterdir()), [])
+            self.assertEqual(pc.saves, 0)
+
+    def test_control_stopped_blocks_before_candidate_creation(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism, control_stopped=True)
+            with self.assertRaises(EmergencyStopError):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
             self.assertEqual(list((record.root / "candidates").iterdir()), [])
             self.assertEqual(pc.saves, 0)
@@ -179,7 +193,7 @@ class CandidateSandboxTests(unittest.TestCase):
             self.assertEqual(candidate.status, CandidateStatus.NEEDS_HUMAN_REVIEW)
             self.assertEqual(pc.saves, 0)
 
-    def test_emergency_stop_before_save_blocks_candidate_without_saving(self) -> None:
+    def test_emergency_stop_after_edit_blocks_candidate_without_saving(self) -> None:
         temporary, record = self.make_record()
         with temporary:
             cubism = FakeCubism(record.working_model)
@@ -190,3 +204,38 @@ class CandidateSandboxTests(unittest.TestCase):
             candidate = CandidateManager().load(record, candidate_json.parent.name)
             self.assertEqual(candidate.status, CandidateStatus.BLOCKED)
             self.assertEqual(pc.saves, 0)
+            self.assertEqual(cubism.edits, [("PartA", "blue")])
+
+    def test_emergency_stop_after_save_blocks_validation_commands(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism, stop_after=4)
+            validator = FakeValidator()
+            with self.assertRaises(EmergencyStopError):
+                asyncio.run(CandidateSandbox(cubism, pc, validator=validator).run(record, emergency_stop_verified=True))
+            candidate_json = next((record.root / "candidates").glob("candidate-*/candidate.json"))
+            candidate = CandidateManager().load(record, candidate_json.parent.name)
+            self.assertEqual(candidate.status, CandidateStatus.BLOCKED)
+            self.assertEqual(pc.saves, 1)
+            self.assertEqual(validator.calls, 0)
+
+    def test_changed_source_blocks_before_candidate_creation(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            record.source_model.write_bytes(b"changed source")
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism)
+            with self.assertRaisesRegex(WorkspaceError, "sourceコピー"):
+                asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
+            self.assertEqual(list((record.root / "candidates").iterdir()), [])
+
+    def test_changed_working_blocks_before_candidate_creation(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            record.working_model.write_bytes(b"changed working")
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism)
+            with self.assertRaisesRegex(WorkspaceError, "workingコピー"):
+                asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
+            self.assertEqual(list((record.root / "candidates").iterdir()), [])

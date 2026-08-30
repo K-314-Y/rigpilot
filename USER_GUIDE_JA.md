@@ -194,12 +194,12 @@ RigPilotは、一時編集のreadback、rollbackのreadback、対象Partの開�
 
 異常を感じたら、Windows PC Control MCPの実装済みの方法で止めます。
 
-1. **Ctrl + Alt + Shift + F12**を押す。
-2. 作成済みならデスクトップの「PC MCP 緊急停止」をダブルクリックする。
-3. Windows PC Control MCPフォルダーの`emergency-stop.cmd`を実行する。
+1. デスクトップの**「PC MCP 緊急停止」**をダブルクリックする。
+2. ボタンがない場合は、Windows PC Control MCPフォルダーの`emergency-stop.cmd`を実行する。
+3. 補助機能として、設定済みなら**Ctrl + Alt + Shift + F11**を押す。
 4. マウスを画面左上へ移動してPyAutoGUIのフェイルセーフを使う。
 
-緊急停止は`EMERGENCY_STOP`として保存され、MCPを再起動しても自動解除されません。原因を確認するまで`resume_control`で再開しないでください。
+Phase 2BではF11の登録は必須条件ではありません。デスクトップの停止ボタンまたは`emergency-stop.cmd`で作られる`EMERGENCY_STOP`を正式な停止手段として使います。緊急停止は再起動しても自動解除されません。原因を確認するまで`resume_control`で再開しないでください。
 
 ## 安全について
 

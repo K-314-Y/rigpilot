@@ -84,15 +84,15 @@
 - Candidateは`project/candidates/candidate-.../<working名>.cmo3`にのみ作成し、初期SHA-256がworkingコピーと一致することを確認する
 - `CandidateRecord`はCandidateのパス、base/initial/current SHA-256、状態、model/document UID、検査結果、Promote可否を個別に保存する
 - Candidate以外のパス、パストラバーサル、既存Candidateディレクトリへの上書きを拒否する
-- `candidate-test --dry-run`はCandidateディレクトリ、MCP、Saveを一切呼ばない。通常実行は`--confirm-emergency-stop`がなく、またはPC Control Statusが`emergency_hotkey_registered: true`と`emergency_hotkey_status: registered`を返さない限りCandidate作成前にBLOCKEDとする
+- `candidate-test --dry-run`はCandidateディレクトリ、MCP、Saveを一切呼ばない。通常実行は独立したEmergency Stop（デスクトップの「PC MCP 緊急停止」または`emergency-stop.cmd`）を手動確認して`--confirm-emergency-stop`を指定し、PC Control接続、`control_stopped: false`、停止ファイル不在を確認できない限りCandidate作成前にBLOCKEDとする。F11ホットキーは補助機能であり必須Gateではない
 - 保存経路はCandidateだけを開き、Partの`LabelColorType`だけを変更し、保存直前に緊急停止、Cubismの前面化、UID、Candidate文書パス、source/working/公式原本のSHA-256を確認する
 - 保存応答だけでは成功とせず、CandidateファイルのSHA-256変化と連続読取りでの安定化を必須とする
 - Candidate Validationは`ValidationTarget(role="candidate")`を明示して実行し、ProjectRecordのworkingコピーを置き換えない
 - Phase 2Bは自動Promoteをしない。検査済みCandidateは削除せず`REJECTED`として残す
 
-2026-08-30の実機開始結果: Windows PC Control MCPがEmergency Stopホットキーを登録できないと報告したため、Candidateを作成する前に中断した。Candidate、working、source、公式原本への保存は行っていない。
+2026-08-30の旧Safety Gate下で作成されたBLOCKED Candidateは監査記録として保持し、再利用しない。新方針では、Emergency Stopボタンと手動resumeの実機確認後に新規Candidateで開始する。source、working、公式原本の保存は行っていない。
 
-未確認: Windows PC Control MCPの実機Emergency Stop登録、Candidateの実機Save、Candidate SHA-256安定化、Candidate Validation、利用者の画面目視確認。
+未確認: Windows PC Control MCPの独立したEmergency Stopボタンとmanual resume、Candidateの実機Save、Candidate SHA-256安定化、Candidate Validation、利用者の画面目視確認。
 
 ## 検証状態
 

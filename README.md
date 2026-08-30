@@ -35,13 +35,13 @@ Phase 2Aは自動修正ではありません。CubismのEdit権限で、描画�
 Phase 2Bは、`working/`を直接保存対象にせず、`candidates/candidate-.../`へ作成したコピーだけを編集・保存・検査するための基盤です。
 
 - `candidate-test --dry-run`はファイルもMCPも変更せず、候補パスと対象SHA-256だけを表示する
-- 通常実行は、Windows PC Control MCPのEmergency Stopを手動確認して`--confirm-emergency-stop`を明示し、さらにStatus APIが`emergency_hotkey_registered: true`かつ`emergency_hotkey_status: registered`を返さない限り、Candidate作成より前に停止する
+- 通常実行は、デスクトップの「PC MCP 緊急停止」または`emergency-stop.cmd`によるEmergency Stopを手動確認して`--confirm-emergency-stop`を明示し、PC Control接続、`control_stopped: false`、停止ファイル不在を確認できない限り、Candidate作成より前に停止する
 - 保存直前に緊急停止、Cubism前面化、model/document UID、Candidate文書パス、公式原本・source・workingのSHA-256を再確認する
 - 保存後はCandidateのSHA-256が変更され、連続読取りで安定した場合だけ候補検査へ進む
 - Candidate検査は明示的なCandidate対象を使うため、`working_model`を検査対象へ置き換えない
 - Phase 2Bは自動Promoteを実行しない。検査後のCandidateは削除せず`REJECTED`として保持する
 
-Fake MCPによる検証は完了しています。2026-08-30の実機開始ではWindows PC Control MCPがEmergency Stopホットキーを登録できないと報告したため、保存前に中断しました。Candidate作成・Candidate保存・Candidate Validation・利用者の画面確認は未実施です。
+F11ホットキーは補助的な安全機能であり、Phase 2Bの必須Save Gateにはしません。実機のEmergency Stopボタンと手動resumeの確認後にだけ新しいCandidateを作成します。以前のBLOCKED Candidateは監査記録として保持し、再利用しません。Candidate保存・Candidate Validation・利用者の画面確認は未実施です。
 
 ## 文書
 
