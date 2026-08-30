@@ -19,7 +19,7 @@ Live2D Cubismの制作・検査を、安全な作業コピー上でオーケス�
 
 Cubismの保存、書き出し、構造編集、削除は実装しません。2026-08-29に公式サンプルのworkingコピーでPhase 1検査を実行し、10カテゴリのPASS、1カテゴリのSKIPPED、全対象の復元読取り一致、3ファイルのSHA-256不変、利用者による中立状態の目視確認を得ました。別モデル・別環境での結果を保証するものではありません。
 
-## Phase 2A: Safe Edit Transaction Foundation（実装済み・実機Stage 1前）
+## Phase 2A: Safe Edit Transaction Foundation（実装済み・公式サンプル実機確認済み）
 
 Phase 2Aは自動修正ではありません。CubismのEdit権限で、描画結果に影響しないPartの`LabelColorType`を一度だけ変更し、読取り、元値へのrollback、Object比較、既存Phase 1検査までを一つの取引として確認する基盤です。
 
@@ -27,6 +27,8 @@ Phase 2Aは自動修正ではありません。CubismのEdit権限で、描画�
 - 実行時だけEdit承認を確認し、`validate`・`verify-live`にはEditを要求しない
 - 許可する編集は`cubism_edit_part`の`label_color_type`だけ。Save・Export・batch編集・Parameter Key・ArtMesh・Deformerの変更は呼ばない
 - Emergency Stop後はrollbackを含む追加の自動編集を送らず、未保存でCubismを閉じるよう案内する
+
+2026-08-30に公式サンプルのworkingコピーで`LabelColorType`を`undefined → blue → undefined`として実機確認しました。一時編集・rollbackの読戻し、対象Part Objectの開始前後一致、最終Phase 1検査（10 PASS / 1 SKIPPED）、3ファイルのSHA-256不変、利用者の画面目視確認が成功しています。SaveとExportは実行していません。
 
 ## 文書
 

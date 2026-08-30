@@ -158,6 +158,8 @@ Phase 2Aは「自動修正」ではありません。CubismのEdit権限があ�
 
 RigPilotは、一時編集のreadback、rollbackのreadback、対象Partの開始前・終了後の一致、3つの`.cmo3`のSHA-256、最後のPhase 1検査を確認します。詳細は`reports`フォルダーの`phase-2a-edit-transaction-*.json`に記録されます。
 
+公式サンプルのworkingコピーでは、`LabelColorType undefined → blue → undefined`の実機確認と、終了後のPhase 1検査に成功しています。ただし、別のモデルや別のCubism環境で同じ結果になることは事前に保証しません。
+
 ### Phase 2Aの緊急停止
 
 異常を感じたら、次章の緊急停止を使ってください。Phase 2Aでは緊急停止が作動した後、**rollbackも含めてCubismへの追加操作を自動で行いません**。Cubism上に未保存のラベル色変更が残っている可能性があるため、保存せずにCubismを閉じてください。自動再開もしません。

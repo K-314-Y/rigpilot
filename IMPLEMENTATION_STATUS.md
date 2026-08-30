@@ -64,7 +64,7 @@
 
 ## Phase 2A: Safe Edit Transaction Foundation
 
-コード実装済み・Fake MCP確認済み・公式サンプルでの実機Stage 1 dry-run確認済みです。Editを伴うStage 2以降はまだ実施していません。
+コード実装済み・Fake MCP確認済み・公式サンプルでの実機Stage 1/2/3確認済みです。
 
 - `rigpilot edit-test --dry-run`は、実編集をせずに編集可能なPart、現在の`LabelColorType`、一時値、rollback値を確認する
 - `rigpilot edit-test`だけがEdit承認を確認する。許可する実編集はPartの`label_color_type`のみで、`cubism_edit_batch`、Parameter Key、ArtMesh、Deformer、Save、Exportは呼ばない
@@ -75,14 +75,16 @@
 
 2026-08-30に公式サンプルのworkingコピーで`edit-test --dry-run`を実行しました。`Part01HandR`の`LabelColorType`が`undefined`であることを読み取り、一時値`blue`、rollback値`undefined`の取引計画を生成しました。Edit Tool、Save、Exportは呼び出していません。
 
+同日に`edit-test`を実行しました。`Part01HandR`の`LabelColorType`を`undefined → blue → undefined`として一時編集し、Edit Readback MATCH、Rollback Readback MATCH、対象Object Before/After IDENTICALを確認しました。続けてPhase 1 Validation Engineを1回実行し、10 PASS / 1 SKIPPED、全Parameter復元読取り一致、30回の画面取得を確認しました。公式原本、source、workingのSHA-256は不変で、Save・Exportは未実行です。利用者もモデル表示が開始前と同じであることを目視確認しました。詳細は`reports/phase-2a-edit-transaction-20260830T002638Z.json`にあります。
+
 ## 検証状態
 
 - IMPLEMENTED: MCP client、Adapter、Identity Guard、Probe、setup/doctor/verify-live/validate/edit-test CLI、使用書
 - MOCK VERIFIED: Fake MCPによるProbe成功、画面取得失敗、UID変更、緊急停止、復元失敗、復元読取り不一致の1回再試行、source/working SHA-256変化、スクリーンショット待機・一時休止・1回再試行、Phase 1のPlan生成、SKIPPED、複数Parameter復元、dry-run、JSONレポート、Phase 2AのEdit未承認・dry-run・一時readback・rollback・条件付きretry・Emergency Stop・hash変化・最終検査再利用
 - WINDOWS VERIFIED: Windows PC Control MCPの接続、Cubismウィンドウ検出、クールダウン適用下の連続スクリーンショット4回、緊急停止OFF
-- CUBISM VERIFIED: Allow承認、workingコピーの識別照合、`ParamAngleX`の一時操作・復元・読取り一致、Phase 1の10カテゴリPASS・30回の画面取得、利用者の中立状態目視確認
-- VERIFIED IN THIS RUN: 公式原本、source、workingのSHA-256不変。保存、書き出し、構造編集、削除は実行していない
-- UNVERIFIED: Phase 2AのEditを伴う実機round-tripと最終Phase 1検査、他のCubismバージョン、別モデル、別Windows環境での再現性
+- CUBISM VERIFIED: Allow/Edit承認、workingコピーの識別照合、`ParamAngleX`の一時操作・復元・読取り一致、Phase 1の10カテゴリPASS・30回の画面取得、Phase 2Aの`LabelColorType` round-trip、利用者の中立状態目視確認
+- VERIFIED IN THIS RUN: 公式原本、source、workingのSHA-256不変。Phase 2AのObject Before/After一致。保存、書き出し、構造編集、削除は実行していない
+- UNVERIFIED: 他のCubismバージョン、別モデル、別Windows環境での再現性
 
 ## 未実装
 
