@@ -89,4 +89,3 @@ class CandidateManagerTests(unittest.TestCase):
             self.assertEqual(record.working_model.read_bytes(), b"candidate")
             self.assertEqual(record.checkpoints[0].path.read_bytes(), b"model")
             self.assertEqual(candidate.status, CandidateStatus.PROMOTED)
-
