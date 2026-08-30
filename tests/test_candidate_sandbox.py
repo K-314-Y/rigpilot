@@ -56,8 +56,16 @@ class FakeCubism:
 
 
 class FakePcControl:
-    def __init__(self, cubism: FakeCubism, *, open_changes_document: bool = True, stop_after: int | None = None) -> None:
+    def __init__(
+        self,
+        cubism: FakeCubism,
+        *,
+        hotkey_registered: bool = True,
+        open_changes_document: bool = True,
+        stop_after: int | None = None,
+    ) -> None:
         self.cubism = cubism
+        self.hotkey_registered = hotkey_registered
         self.open_changes_document = open_changes_document
         self.stop_after = stop_after
         self.stop_checks = 0
@@ -66,6 +74,12 @@ class FakePcControl:
 
     async def verify_candidate_save_schema(self) -> None:
         return None
+
+    async def get_status(self) -> dict[str, object]:
+        return {
+            "emergency_hotkey_registered": self.hotkey_registered,
+            "emergency_hotkey_status": "registered" if self.hotkey_registered else "unavailable",
+        }
 
     async def is_emergency_stopped(self) -> bool:
         self.stop_checks += 1
@@ -124,6 +138,16 @@ class CandidateSandboxTests(unittest.TestCase):
             pc = FakePcControl(cubism)
             with self.assertRaisesRegex(CandidateSandboxError, "Emergency Stop"):
                 asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=False))
+            self.assertEqual(list((record.root / "candidates").iterdir()), [])
+            self.assertEqual(pc.saves, 0)
+
+    def test_unregistered_hotkey_blocks_before_candidate_creation(self) -> None:
+        temporary, record = self.make_record()
+        with temporary:
+            cubism = FakeCubism(record.working_model)
+            pc = FakePcControl(cubism, hotkey_registered=False)
+            with self.assertRaisesRegex(CandidateSandboxError, "登録済みではない"):
+                asyncio.run(CandidateSandbox(cubism, pc, validator=FakeValidator()).run(record, emergency_stop_verified=True))
             self.assertEqual(list((record.root / "candidates").iterdir()), [])
             self.assertEqual(pc.saves, 0)
 

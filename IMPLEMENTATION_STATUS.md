@@ -84,7 +84,7 @@
 - Candidateは`project/candidates/candidate-.../<working名>.cmo3`にのみ作成し、初期SHA-256がworkingコピーと一致することを確認する
 - `CandidateRecord`はCandidateのパス、base/initial/current SHA-256、状態、model/document UID、検査結果、Promote可否を個別に保存する
 - Candidate以外のパス、パストラバーサル、既存Candidateディレクトリへの上書きを拒否する
-- `candidate-test --dry-run`はCandidateディレクトリ、MCP、Saveを一切呼ばない。通常実行は`--confirm-emergency-stop`がない限りCandidate作成前にBLOCKEDとする
+- `candidate-test --dry-run`はCandidateディレクトリ、MCP、Saveを一切呼ばない。通常実行は`--confirm-emergency-stop`がなく、またはPC Control Statusが`emergency_hotkey_registered: true`と`emergency_hotkey_status: registered`を返さない限りCandidate作成前にBLOCKEDとする
 - 保存経路はCandidateだけを開き、Partの`LabelColorType`だけを変更し、保存直前に緊急停止、Cubismの前面化、UID、Candidate文書パス、source/working/公式原本のSHA-256を確認する
 - 保存応答だけでは成功とせず、CandidateファイルのSHA-256変化と連続読取りでの安定化を必須とする
 - Candidate Validationは`ValidationTarget(role="candidate")`を明示して実行し、ProjectRecordのworkingコピーを置き換えない

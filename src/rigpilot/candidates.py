@@ -210,6 +210,7 @@ class CandidateSandbox:
             )
         await self.cubism.verify_edit_schema()
         await self.pc_control.verify_candidate_save_schema()
+        await self._ensure_emergency_hotkey_ready()
         await self._ensure_not_stopped()
         status = await self.cubism.get_status()
         if not status.get("connected") or not status.get("registered") or not status.get("approved"):
@@ -285,6 +286,7 @@ class CandidateSandbox:
             raise CandidateSandboxError("Candidateが編集済み状態ではないため保存できません")
         if sha256_file(candidate.model_path) != candidate.initial_sha256:
             raise CandidateSandboxError("Save前にCandidateファイルが予期せず変化しました")
+        await self._ensure_emergency_hotkey_ready()
         await self._ensure_not_stopped()
         await self.pc_control.focus_cubism()
         await self._guard_candidate_identity(candidate, identity)
@@ -332,6 +334,16 @@ class CandidateSandbox:
     async def _ensure_not_stopped(self) -> None:
         if await self.pc_control.is_emergency_stopped():
             raise EmergencyStopError("Windows PC Control MCPは緊急停止中です")
+
+    async def _ensure_emergency_hotkey_ready(self) -> None:
+        status = await self.pc_control.get_status()
+        if (
+            status.get("emergency_hotkey_registered") is not True
+            or status.get("emergency_hotkey_status") != "registered"
+        ):
+            raise CandidateSandboxError(
+                "Windows PC Control MCPのEmergency Stopホットキーが登録済みではないためCandidate Saveを開始しません"
+            )
 
     @staticmethod
     def _validation_passed(report: ValidationReport) -> bool:
