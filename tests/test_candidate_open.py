@@ -26,6 +26,8 @@ class FakeCandidateOpenClient:
 
     async def call_json(self, name: str, arguments: dict[str, object] | None = None) -> dict[str, object]:
         self.json_calls.append((name, arguments))
+        if name == "confirm_open_file_dialog":
+            return {"ok": True, "dialog_closed": True}
         return {"ok": True}
 
 
@@ -50,8 +52,7 @@ class CandidateOpenTests(unittest.TestCase):
             [
                 ("activate_window", {"title_contains": "Live2D Cubism Editor - working.cmo3"}),
                 ("hotkey", {"keys": ["ctrl", "o"]}),
-                ("type_text", {"text": str(candidate), "use_clipboard": False}),
-                ("press_key", {"key": "enter"}),
+                ("confirm_open_file_dialog", {"path": str(candidate)}),
             ],
         )
 
@@ -67,7 +68,7 @@ class CandidateOpenTests(unittest.TestCase):
 
         self.assertEqual([name for name, _arguments in client.json_calls], ["activate_window", "hotkey"])
 
-    def test_unexpected_dialog_after_enter_stops_without_more_input(self) -> None:
+    def test_unexpected_dialog_after_confirm_stops_without_more_input(self) -> None:
         cubism = window(1, "Live2D Cubism Editor - working.cmo3")
         dialog = window(2, "開く")
         warning = window(3, "互換性の警告")
@@ -77,4 +78,4 @@ class CandidateOpenTests(unittest.TestCase):
         with self.assertRaisesRegex(CandidateOpenDialogError, "想定外"):
             asyncio.run(self.adapter(client).open_candidate_in_cubism(candidate))
 
-        self.assertEqual([name for name, _arguments in client.json_calls], ["activate_window", "hotkey", "type_text", "press_key"])
+        self.assertEqual([name for name, _arguments in client.json_calls], ["activate_window", "hotkey", "confirm_open_file_dialog"])

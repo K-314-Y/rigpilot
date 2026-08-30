@@ -149,7 +149,7 @@ class WindowsPcControlAdapter:
 
     async def verify_candidate_open_schema(self) -> None:
         """Confirm only the coordinate-free GUI actions used to open a Candidate."""
-        await self.client.require_tools(self._TOOLS | {"hotkey", "type_text", "press_key"})
+        await self.client.require_tools(self._TOOLS | {"hotkey", "confirm_open_file_dialog"})
 
     async def verify_candidate_save_schema(self) -> None:
         """Confirm only the guarded GUI actions used by the Phase 2B path."""
@@ -255,14 +255,9 @@ class WindowsPcControlAdapter:
         if result.get("ok") is not True:
             raise CandidateOpenDialogError("CubismへCtrl+Oを送信できませんでした")
         dialog = await self._wait_for_open_dialog(baseline)
-        typed = await self.client.call_json(
-            "type_text", {"text": str(candidate_path), "use_clipboard": False}
-        )
-        if typed.get("ok") is not True:
-            raise CandidateOpenDialogError("Candidateパスをファイル選択ダイアログへ入力できませんでした")
-        entered = await self.client.call_json("press_key", {"key": "enter"})
-        if entered.get("ok") is not True:
-            raise CandidateOpenDialogError("Candidate OpenのEnterを送信できませんでした")
+        confirmed = await self.client.call_json("confirm_open_file_dialog", {"path": str(candidate_path)})
+        if confirmed.get("ok") is not True or confirmed.get("dialog_closed") is not True:
+            raise CandidateOpenDialogError("Candidate Openダイアログを安全に確定できませんでした")
         await self._wait_for_open_dialog_to_close(baseline, dialog)
 
     async def _windows(self) -> list[dict[str, Any]]:
